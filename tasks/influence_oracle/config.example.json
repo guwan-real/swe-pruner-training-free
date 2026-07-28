@@ -1,0 +1,25 @@
+{
+  "model_path": "/absolute/path/to/local/coder-model",
+  "scorer": {
+    "device": "auto",
+    "dtype": "bfloat16",
+    "max_length": 8192,
+    "normalize": false,
+    "trust_remote_code": false,
+    "local_files_only": true
+  },
+  "objective": {
+    "metadata_key": "next_action",
+    "instruction": "Predict the coding agent's recorded next action from the available tool observation."
+  },
+  "pruner": {
+    "strategy": "leave_one_out",
+    "block_max_lines": 16,
+    "max_initial_blocks": 64,
+    "max_evaluations": 2048,
+    "protect_structure": false,
+    "protect_errors": false,
+    "protect_metadata_anchors": false,
+    "show_line_numbers": true
+  }
+}

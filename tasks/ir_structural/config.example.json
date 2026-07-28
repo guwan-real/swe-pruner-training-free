@@ -1,0 +1,17 @@
+{
+  "weights": {
+    "bm25": 1.0,
+    "identifier": 2.0,
+    "path": 0.75,
+    "recent": 1.0,
+    "structure": 0.35,
+    "error": 1.0,
+    "window": 0.25
+  },
+  "bm25_k1": 1.2,
+  "bm25_b": 0.75,
+  "scoring_window": 1,
+  "expansion_top_k": 8,
+  "preserve_structure": true,
+  "show_line_numbers": true
+}

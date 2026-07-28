@@ -1,0 +1,16 @@
+{
+  "request_id": "source-demo",
+  "text": "import json\n\nDEFAULT_TIMEOUT = 30\n\ndef load_config(path):\n    with open(path, encoding=\"utf-8\") as handle:\n        return json.load(handle)\n\ndef connect(config):\n    timeout = config.get(\"timeout\", DEFAULT_TIMEOUT)\n    return Client(config[\"url\"], timeout=timeout)\n\ndef run(path):\n    config = load_config(path)\n    return connect(config)\n",
+  "query": "Where is timeout selected before Client is created?",
+  "tool_type": "source",
+  "path": "client.py",
+  "recent_context": [
+    "Client timeout configuration"
+  ],
+  "budget": {
+    "keep_ratio": 0.5,
+    "min_lines": 4,
+    "no_prune_below": 0,
+    "context_window": 1
+  }
+}

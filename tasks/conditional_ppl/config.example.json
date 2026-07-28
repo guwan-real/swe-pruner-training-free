@@ -1,0 +1,25 @@
+{
+  "model_path": "/absolute/path/to/local/coder-model",
+  "scorer": {
+    "device": "auto",
+    "dtype": "bfloat16",
+    "max_length": 4096,
+    "trust_remote_code": false,
+    "local_files_only": true
+  },
+  "pruner": {
+    "coarse_top_fraction": 0.5,
+    "coarse_top_blocks": null,
+    "block_max_lines": 24,
+    "fine_context_lines": 2,
+    "coarse_weight": 0.35,
+    "fine_weight": 0.65,
+    "coarse_first_token_only": false,
+    "first_token_only": true,
+    "protect_structure": true,
+    "protect_errors": true,
+    "protect_metadata_anchors": true,
+    "expand_anchor_context": false,
+    "show_line_numbers": true
+  }
+}

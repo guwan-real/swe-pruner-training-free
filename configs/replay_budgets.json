@@ -1,0 +1,10 @@
+{
+  "keep_ratios": [
+    1.0,
+    0.7,
+    0.5,
+    0.35,
+    0.25
+  ],
+  "description": "Report the quality-cost Pareto frontier at these matched budgets."
+}

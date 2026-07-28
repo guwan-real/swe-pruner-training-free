@@ -1,0 +1,6 @@
+# Install the CUDA-matched torch wheel first on the server.
+numpy>=1.26
+safetensors>=0.4
+transformers>=4.51,<5
+tree-sitter>=0.23
+tree-sitter-language-pack>=0.7

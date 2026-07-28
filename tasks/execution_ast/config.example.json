@@ -1,0 +1,16 @@
+{
+  "scores": {
+    "query_match": 9.0,
+    "critical_signal": 10.0,
+    "ast_hit_body": 8.0,
+    "ast_neighbor_body": 5.0,
+    "skeleton": 3.0,
+    "context": 1.0,
+    "fallback": 0.01
+  },
+  "preserve_python_skeleton": true,
+  "expand_hit_bodies": true,
+  "expand_one_hop": true,
+  "tree_shallow_depth": 1,
+  "show_line_numbers": true
+}

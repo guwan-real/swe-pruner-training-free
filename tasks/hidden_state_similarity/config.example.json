@@ -1,0 +1,18 @@
+{
+  "pruner": {
+    "pooling": "last-4",
+    "anchor_weights": {
+      "query": 0.35,
+      "tool": 0.2,
+      "error": 0.2,
+      "decode": 0.25
+    },
+    "line_map_base": "auto",
+    "anchor_index_base": 0,
+    "derive_error_anchor": true,
+    "expansion_seed_count": 2,
+    "show_line_numbers": true,
+    "hidden_states_key": "hidden_states",
+    "token_to_line_key": "token_to_line"
+  }
+}

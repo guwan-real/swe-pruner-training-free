@@ -1,0 +1,24 @@
+{
+  "bands": [
+    {
+      "max_lines": 20,
+      "keep_ratio": 1.0
+    },
+    {
+      "max_lines": 80,
+      "keep_ratio": 0.7
+    },
+    {
+      "max_lines": 200,
+      "keep_ratio": 0.45
+    },
+    {
+      "max_lines": null,
+      "keep_ratio": 0.3
+    }
+  ],
+  "min_lines": 8,
+  "hard_max_lines": null,
+  "no_prune_below": 20,
+  "context_window": 1
+}

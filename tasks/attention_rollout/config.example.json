@@ -1,0 +1,25 @@
+{
+  "pruner": {
+    "method": "attention_mass",
+    "attention_layout": "layers,heads,steps,tokens",
+    "layers": "last-4",
+    "heads": "all",
+    "decode_steps": "first-3",
+    "layer_aggregation": "mean",
+    "head_aggregation": "mean",
+    "step_aggregation": "weighted",
+    "step_decay": 0.8,
+    "line_aggregation": "sum",
+    "sink_first_tokens": 1,
+    "sink_token_indices": [],
+    "top_p": 0.9,
+    "selection_mode": "hybrid",
+    "structure_floor": 0.08,
+    "local_floor": 0.04,
+    "local_window": 1,
+    "local_seed_count": 3,
+    "rollout_residual_weight": 1.0,
+    "line_map_base": "auto",
+    "show_line_numbers": true
+  }
+}

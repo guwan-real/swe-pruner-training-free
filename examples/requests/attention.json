@@ -1,0 +1,33 @@
+{
+  "request_id": "attention-demo",
+  "text": "setup()\nparse_payload(data)\nraise ParseError(data)\ncleanup()",
+  "query": "find the parser error",
+  "tool_type": "source",
+  "path": "parser.py",
+  "budget": {
+    "keep_ratio": 0.5,
+    "min_lines": 2,
+    "no_prune_below": 0,
+    "context_window": 0
+  },
+  "metadata": {
+    "attention": [
+      [
+        [
+          [
+            0.01,
+            0.25,
+            0.65,
+            0.09
+          ]
+        ]
+      ]
+    ],
+    "token_to_line": [
+      1,
+      2,
+      3,
+      4
+    ]
+  }
+}
