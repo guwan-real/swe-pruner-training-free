@@ -16,3 +16,4 @@ models/
 *.safetensors
 *.pt
 *.pth
+server_profile.env

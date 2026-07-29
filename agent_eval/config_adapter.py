@@ -61,6 +61,68 @@ def validate_pruning_contract(config: Mapping[str, Any]) -> None:
         )
 
 
+def resolve_pruning_base_config(
+    primary: Path | None,
+    *,
+    search_root: Path | None = None,
+    explicit: bool = False,
+) -> Path:
+    """Resolve one compatible config without guessing between multiple templates."""
+
+    primary_error: Exception | None = None
+    if primary is not None:
+        primary = primary.expanduser().resolve()
+        try:
+            if not primary.is_file():
+                raise FileNotFoundError(f"base config does not exist: {primary}")
+            validate_pruning_contract(load_yaml(primary))
+            return primary
+        except (OSError, RuntimeError, ValueError) as exc:
+            if explicit:
+                raise
+            primary_error = exc
+
+    compatible: list[Path] = []
+    if search_root is not None:
+        search_root = search_root.expanduser().resolve()
+        search_dirs = (
+            search_root / "templates",
+            search_root / "src" / "minisweagent" / "config" / "extra",
+        )
+        for directory in search_dirs:
+            if not directory.is_dir():
+                continue
+            for candidate in sorted(directory.rglob("*.yaml")):
+                if primary is not None and candidate.resolve() == primary:
+                    continue
+                try:
+                    validate_pruning_contract(load_yaml(candidate))
+                except (OSError, RuntimeError, ValueError):
+                    continue
+                compatible.append(candidate.resolve())
+
+    compatible = sorted(set(compatible))
+    if len(compatible) == 1:
+        return compatible[0]
+    if len(compatible) > 1:
+        rendered = "\n".join(f"  - {path}" for path in compatible[:20])
+        raise RuntimeError(
+            "multiple pruning-capable mini-swe-agent configs were found; "
+            "set MINI_SWE_BASE_CONFIG explicitly:\n"
+            f"{rendered}"
+        )
+    if primary_error is not None:
+        raise RuntimeError(
+            "the installed mini-swe-agent base config is not pruning-capable and "
+            "no unique compatible template was found; set MINI_SWE_BASE_CONFIG. "
+            f"Primary config error: {primary_error}"
+        ) from primary_error
+    raise RuntimeError(
+        "no pruning-capable mini-swe-agent config was found; "
+        "set MINI_SWE_BASE_CONFIG to the existing pruning template"
+    )
+
+
 def hosted_vllm_model_name(model_id: str) -> str:
     model_id = model_id.strip()
     if not model_id:

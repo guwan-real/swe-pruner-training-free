@@ -44,14 +44,16 @@ python3 -m tf_pruning.cli evaluate \
 
 ```bash
 git pull --ff-only
-bash scripts/run_server_experiments.sh
+bash scripts/run_server_experiments.sh preflight
+bash scripts/run_server_experiments.sh smoke
 ```
 
 脚本会先移除当前终端继承的 uv/venv，再激活
 `swepruner-training-free` conda 环境；随后校验 vLLM、Docker 与
-mini-swe-agent 的 pruning hook，并在相同 SWE-Bench Verified task slice
-上并行运行 baseline、IR、AST 和 IR+AST。默认是真实的前 10 个任务，
-不会回退到 toy replay。查看状态、汇总和官方评分：
+mini-swe-agent 的 pruning hook。一题 smoke 比较 baseline 与 IR，且不会
+回退到 toy replay。smoke 和官方评分通过后，零参数运行会在相同
+SWE-Bench Verified 前 10 题上比较 baseline、IR、AST 和 IR+AST。查看
+状态、汇总和官方评分：
 
 ```bash
 bash scripts/run_server_experiments.sh status
@@ -62,6 +64,10 @@ bash scripts/run_server_experiments.sh grade
 真实实验的完整说明见 `docs/CODING_AGENT_EXPERIMENTS.md`。本地 vLLM
 model id 会从 `http://127.0.0.1:8015/v1/models` 自动发现；无需把 API
 key 写入仓库。
+
+服务器本地 agent 的逐项交接与验收清单见
+`docs/SERVER_AGENT_HANDOFF.md`。它明确区分本项目 conda、已有
+mini-swe-agent venv 和 grader 环境。
 
 兼容官方 `POST /prune` 请求/响应字段的本地服务：
 
