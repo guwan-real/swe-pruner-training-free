@@ -1,192 +1,129 @@
 # B200 服务器引导
 
-本项目沿用现有项目环境，不改变服务器：
+本项目沿用现有服务器约定：
 
 ```text
-基础目录：/home/yuantao/futao
-Python：3.11
+仓库：/home/yuantao/futao/swepruner_training_free_workspace/swe-pruner-training-free
+conda：swepruner-training-free
+Python：3.11+
 GPU：B200
-PyTorch：CUDA 13.0 wheel
+vLLM：http://127.0.0.1:8015/v1
+Agent：服务器已经安装的 mini-swe-agent
 ```
 
-## 1. clone 新 repo
-
-```bash
-export BASE_DIR=/home/yuantao/futao
-export WORK_DIR=$BASE_DIR/swepruner_training_free_workspace
-export PROJECT_DIR=$WORK_DIR/swe-pruner-training-free
-
-mkdir -p "$WORK_DIR"
-cd "$WORK_DIR"
-git clone https://github.com/guwan-real/swe-pruner-training-free.git \
-  swe-pruner-training-free
-cd "$PROJECT_DIR"
-```
-
-## 2. 创建 conda 环境
-
-```bash
-bash scripts/create_server_conda.sh swepruner-training-free
-conda activate swepruner-training-free
-```
-
-脚本默认先安装：
+## 真实实验的数据流
 
 ```text
-torch==2.12.1
-index=https://download.pytorch.org/whl/cu130
+SWE-Bench Verified issue
+  -> mini-swe-agent
+  -> qwen3.5-27b on the existing vLLM server
+  -> shell command inside the SWE-Bench Docker image
+  -> raw shell observation
+  -> local training-free /prune service
+  -> pruned observation returned to mini-swe-agent
+  -> patch + trajectory + preds.json
+  -> official SWE-Bench grader
 ```
 
-如服务器镜像变化，可显式覆盖：
+`scripts/run_server_experiments.sh` 只适配已安装的 agent，不安装、复制或
+重写 mini-swe-agent。它要求现有版本已经提供 `--pruner-url`、
+`--disable-pruner` 和 `context_focus_question` pruning hook；不满足时
+preflight 会直接失败。适配契约见 `docs/MINI_SWE_AGENT_ADAPTER.md`。
+
+## 一键入口
+
+在已经拉取的仓库中：
 
 ```bash
-TORCH_VERSION=2.12.1 \
-TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 \
-bash scripts/create_server_conda.sh swepruner-training-free
-```
-
-## 3. 一键启动并行实验
-
-环境安装完成后不需要手工复制多条实验命令：
-
-```bash
-cd /home/yuantao/futao/swepruner_training_free_workspace/swe-pruner-training-free
 git pull --ff-only
+bash scripts/run_server_experiments.sh preflight
 bash scripts/run_server_experiments.sh
 ```
 
-新终端即使默认激活了 uv 项目环境也可以直接运行。脚本会在自己的
-子进程中：
+脚本会在自己的子进程中先清理当前 uv/venv，再激活 conda。它会：
 
-1. 从 `PATH` 移除当前 `VIRTUAL_ENV/bin` 并清理 uv/venv 环境变量；
-2. 激活 `swepruner-training-free` conda 环境；
-3. 优先复用 `$WORK_DIR/replay/replay_200.jsonl`；
-4. 若 replay 不存在，则从旧项目 `artifacts/combined_2k/pruning_sft.jsonl`
-   转换最多 200 条；
-5. 若旧数据也不存在，则明确告警并回退到仓库自带 demo；
-6. 用 `nohup` 并行启动 IR 与 AST 的五档预算矩阵。
+1. 请求 `http://127.0.0.1:8015/v1/models`，优先选择 id 中含
+   `qwen3.5` 的模型；
+2. 检查 Docker daemon 和 mini-swe-agent pruning hook；
+3. 以 localhost 端口 `8111/8112/8113` 启动 IR、AST、IR+AST 服务；
+4. 在完全相同的 SWE-Bench Verified task slice 上启动 baseline 和三个
+   training-free pruning arm；
+5. 为每组保存独立的 config、PID、日志、trajectory 和 `preds.json`。
 
-脚本只改变自己的子进程环境，不会修改调用它的父终端。查看进度和结果：
+默认 `TASK_SLICE=0:10`，也就是真实 benchmark 的前 10 题。不存在 replay
+或 demo 回退。
+
+## 查看与评分
 
 ```bash
 bash scripts/run_server_experiments.sh status
 bash scripts/run_server_experiments.sh results
+bash scripts/run_server_experiments.sh grade
+bash scripts/run_server_experiments.sh stop
 ```
 
-只做前台烟测：
+- `results` 汇总 task 数、API calls、prompt/completion token、wall time、
+  剪枝调用、观测 token 保留率和错误数；
+- `grade` 调用本机安装的 `swebench.harness.run_evaluation`，然后把官方
+  report 中的 Resolve Rate 合并回 `summary.csv/json`；
+- grader 未运行时，Resolve Rate 保持空值；
+- `stop` 只处理该 run 目录中记录且命令行匹配的 agent/pruner PID。
 
-```bash
-bash scripts/run_server_experiments.sh smoke
-```
-
-输出分别位于：
+结果目录：
 
 ```text
-$WORK_DIR/runs/<run_tag>/
-$WORK_DIR/logs/<run_tag>/
+$WORK_DIR/agent_runs/<run_tag>/
+├── manifest.json
+├── configs/
+├── services/
+├── arms/
+│   ├── baseline/
+│   ├── ir_structural_keep50/
+│   ├── execution_ast_keep50/
+│   └── ir_ast_hybrid_keep50/
+├── grade/
+├── summary.csv
+└── summary.json
 ```
 
-以下可选输入存在时，一键脚本会自动增加对应实验：
+## 多预算与规模化
 
-| 方法 | 自动发现的输入 |
-|---|---|
-| conditional PPL | `$WORK_DIR/local_configs/conditional_ppl.json` |
-| hidden-state | `$WORK_DIR/replay/hidden_signals.jsonl` |
-| attention | `$WORK_DIR/replay/attention_signals.jsonl` |
-| influence oracle | `local_configs/influence_oracle.json` 和 `replay/oracle_50.jsonl` |
-
-PPL 默认使用物理 GPU 0，influence 默认使用物理 GPU 1；可分别通过
-`PPL_GPU`、`INFLUENCE_GPU` 覆盖。运行
-`bash scripts/run_server_experiments.sh --help` 可查看全部环境变量。
-
-## 4. 模型与数组目录
-
-推荐：
-
-```text
-$WORK_DIR/
-├── models/
-│   └── LOCAL_CAUSAL_MODEL/
-├── replay/
-├── signals/
-│   ├── hidden_states/
-│   └── attention/
-├── runs/
-└── logs/
-```
-
-配置中写服务器本地路径。HF 加载器固定 `local_files_only=True`；如模型尚未下载，应先用服务器现有下载流程准备，不能让实验运行时静默联网。
-
-用冻结模型导出两种 Pro 路线需要的信号：
+环境变量都可以放在服务器自己的 job wrapper 中；仓库不会保存密钥：
 
 ```bash
-python scripts/extract_hf_signals.py \
-  --model-path "$WORK_DIR/models/LOCAL_CAUSAL_MODEL" \
-  --request examples/requests/source_file.json \
-  --output "$WORK_DIR/signals/source_file.npz" \
-  --signals both \
-  --device cuda \
-  --dtype bfloat16 \
-  --hidden-layers 4 \
-  --decode-steps 3
+TASK_SLICE=0:50 \
+KEEP_RATIOS=0.35,0.5,0.7 \
+AGENT_WORKERS=4 \
+bash scripts/run_server_experiments.sh
 ```
 
-输出的 hidden shape 是 `[layers,tokens,hidden]`，attention mass shape 是
-`[layers,heads,decode_steps,tokens]`；`token_to_line` 使用 1-based 行号。
-同时生成的 `source_file.request.json` 已写入本地 NPZ 路径，可直接运行。
-
-## 5. 指定 GPU
-
-先验证与现有 tool wrapper 兼容的 CPU 服务：
+全量 500 题时将 `TASK_SLICE` 设为空。若只跑部分方法：
 
 ```bash
-tf-prune-serve \
-  --method ir_structural \
-  --config tasks/ir_structural/config.example.json \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --no-prune-below 20
+METHODS=ir_structural,ir_ast_hybrid \
+TASK_FILTER='^(django__django-|sympy__sympy-)' \
+bash scripts/run_server_experiments.sh
 ```
 
-另一个终端检查：
+默认 `PARALLEL_ARMS=1` 会让多组 agent 共享同一个 vLLM。若希望避免组间
+吞吐干扰并获得更干净的 wall-time 数据，可设 `PARALLEL_ARMS=0` 串行
+执行；temperature 固定为 0。
+
+## vLLM model id 与认证
+
+通常无需手填 model id。若 `/v1/models` 返回多个模型，可显式指定：
 
 ```bash
-curl -fsS http://127.0.0.1:8000/health
-curl -fsS http://127.0.0.1:8000/prune \
-  -H 'Content-Type: application/json' \
-  --data '{"query":"find timeout","code":"line one\nDEFAULT_TIMEOUT = 30"}'
+VLLM_MODEL_ID='Qwen/Qwen3.5-27B' \
+bash scripts/run_server_experiments.sh preflight
 ```
 
-服务默认 fail-open。只有离线故障测试才建议加 `--fail-closed`。标准库
-HTTP server 没有认证/TLS，默认不要改成公网监听地址。
+本地 vLLM 默认使用占位 key `EMPTY`。如果服务启用了鉴权，只在服务器
+环境中设置 `VLLM_API_KEY`，不要写入 config 或提交 Git。
 
-```bash
-export CUDA_VISIBLE_DEVICES=0
-python -m tf_pruning.cli evaluate \
-  --method hidden_state_similarity \
-  --config tasks/hidden_state_similarity/config.example.json \
-  --input "$WORK_DIR/replay/dev.jsonl" \
-  --output-dir "$WORK_DIR/runs/hidden_dev" \
-  --budget-schedule configs/length_aware_budget.json
-```
+## 离线方法仍然保留
 
-Influence oracle 会执行多次 forward，建议单 GPU、小样本、较粗 block 先跑：
-
-```bash
-export CUDA_VISIBLE_DEVICES=1
-python -m tf_pruning.cli evaluate \
-  --method influence_oracle \
-  --config /path/to/local_influence_config.json \
-  --input "$WORK_DIR/replay/oracle_50.jsonl" \
-  --output-dir "$WORK_DIR/runs/influence_oracle_50" \
-  --keep-ratio 0.5 \
-  --no-prune-below 0
-```
-
-## 6. 并行原则
-
-- IR/AST 用 CPU，不占 B200；
-- hidden/attention 优先消费推理引擎已经导出的数组，避免额外 forward；
-- PPL 与 influence 分配不同物理 GPU；
-- 日志、runs、signals 放在 workspace，不提交 Git；
-- 先完成 smoke 和 50 条 replay，再启动大规模 benchmark。
+`scripts/run_replay_matrix.sh` 仍用于算法级 line recall/critical-miss
+排查；`scripts/run_server_experiments.sh` 专门用于真实 agent benchmark。
+两者输出和指标不可混称。hidden-state、attention、PPL、influence 等
+需要额外推理信号的路线仍按 `docs/EXPERIMENT_GUIDE.md` 做第二阶段实验。

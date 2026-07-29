@@ -12,7 +12,7 @@ conda activate "$ENV_NAME"
 
 python -m pip install --upgrade pip
 python -m pip install "torch==$TORCH_VERSION" --index-url "$TORCH_INDEX_URL"
-python -m pip install -e "$REPO_ROOT[model,syntax]"
+python -m pip install -e "$REPO_ROOT[model,syntax,agent]"
 
 python - <<'PY'
 import torch

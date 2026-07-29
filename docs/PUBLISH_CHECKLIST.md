@@ -47,11 +47,10 @@ git grep -nE 'api[_-]?key|secret|token='
 
 ## 发布后服务器阶段
 
-1. 在 `/home/yuantao/futao` 下 clone
-   `https://github.com/guwan-real/swe-pruner-training-free.git`；
-2. 按 `docs/SERVER_GUIDE.md` 创建独立 conda 环境；
-3. 先跑 CPU 的 IR/AST smoke；
-4. 挂载本地 causal model 与 replay；
-5. 导出 hidden/attention signals；
-6. 只在 50–200 条子集上筛选 Pareto；
-7. 用户确认后再启动大规模 benchmark。
+1. 在现有服务器 clone 中 `git pull --ff-only`；
+2. 确认端口 8015 的 Qwen3.5 vLLM 与现有 mini-swe-agent；
+3. 运行 `scripts/run_server_experiments.sh preflight`；
+4. 用 `smoke` 跑真实一题 baseline/IR；
+5. 默认入口跑相同十题的 baseline、IR、AST、IR+AST；
+6. 用官方 grader 得到 Resolve Rate 后再扩到 50/200/500 题；
+7. hidden/attention/PPL/influence 作为需要额外信号的第二阶段。

@@ -1,8 +1,8 @@
 # 从这里开始
 
 这个仓库是一套 training-free coding-agent 上下文剪枝实验。它不会训练
-观察模型、分类头或 pruning head。六种方法共享统一输入、预算、输出与
-replay 接口，但分别保留在独立任务目录中。
+观察模型、分类头或 pruning head。基础方法共享统一接口；服务器主入口
+实际运行 mini-swe-agent + SWE-Bench，不再把两行 demo 当成 agent 实验。
 
 ## 第一步：先跑纯 CPU 方法
 
@@ -51,6 +51,7 @@ tf-prune-serve \
 | `tasks/conditional_ppl` | 能运行本地 causal LM | 第二阶段 |
 | `tasks/attention_rollout` | 推理引擎能导出 attention | 第二阶段 |
 | `tasks/execution_ast` | 任意 agent，尤其日志/grep/diff | 通用回退 |
+| `tasks/ir_ast_hybrid` | 任意 agent | IR 与执行证据融合主实验 |
 
 每个任务目录内都有独立 `README.md` 与 `config.example.json`。
 
@@ -60,16 +61,20 @@ tf-prune-serve \
 bash scripts/run_local_checks.sh
 ```
 
-服务器已经安装环境时，零参数并行入口为：
+服务器已经启动 `qwen3.5-27b` vLLM（端口 `8015`）且安装了带 pruning
+hook 的 mini-swe-agent 时，零参数真实实验入口为：
 
 ```bash
 bash scripts/run_server_experiments.sh
 ```
 
-它会自动关闭继承的 uv/venv、激活 conda、准备 replay 并启动独立日志和
-结果目录。随后使用同一脚本的 `status`、`results` 子命令查看运行情况。
+它会自动关闭继承的 uv/venv、激活 conda、读取 vLLM model id，运行
+baseline/IR/AST/IR+AST 四组相同 SWE-Bench Verified 任务。随后使用同一
+脚本的 `status`、`results`、`grade` 子命令查看轨迹统计与官方 Resolve
+Rate。默认 `TASK_SLICE=0:10`；这是真实十题 smoke，不是 replay。
 
 完整数据格式见 `docs/INPUT_FORMAT.md`，逐项实现证据见
 `docs/IMPLEMENTATION_MAP.md`，实验步骤见 `docs/EXPERIMENT_GUIDE.md`，
 服务器部署见 `docs/SERVER_GUIDE.md`，接入 agent 的位置见
-`docs/INTEGRATION_GUIDE.md`。
+`docs/INTEGRATION_GUIDE.md`，实际多实验参数见
+`docs/CODING_AGENT_EXPERIMENTS.md`。

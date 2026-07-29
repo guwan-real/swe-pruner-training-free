@@ -96,6 +96,18 @@ hard budget。兼容层只为旧 wrapper 做 `keep_ratio=1-threshold` 的单调
 该服务使用 Python 标准库 HTTP server，默认仅监听 localhost，没有
 认证或 TLS；不得直接暴露到公网。
 
+## 已安装 mini-swe-agent 的实际适配
+
+服务器主入口不重写 agent。`agent_eval/config_adapter.py` 读取已安装
+mini-swe-agent 的 pruning-capable SWE-Bench YAML，并只覆盖 vLLM
+model/API 地址、当前 pruner URL 与预算。`scripts/run_server_experiments.sh`
+会先校验 `--pruner-url`、`--disable-pruner` 和
+`context_focus_question` 契约，再启动真实 agent。
+
+具体契约见 `docs/MINI_SWE_AGENT_ADAPTER.md`，多组实验与指标解释见
+`docs/CODING_AGENT_EXPERIMENTS.md`。若 agent 没有 pruning hook，脚本会
+失败，不会静默改跑离线 replay。
+
 ## 必须保留的安全边界
 
 - 短响应默认不剪；
@@ -117,3 +129,6 @@ final_score =
 ```
 
 结构/执行信号作为保底，不应被纯相似度或 PPL 完全覆盖。融合权重是 test-time 配置，不通过训练获得；评测时必须单独报告单方法与融合方法，避免混淆收益来源。
+
+这一方案已实现为 `tasks/ir_ast_hybrid`：两种原始分数先各自转成 rank
+percentile，再按固定权重融合，以免直接相加不同量纲的分数。

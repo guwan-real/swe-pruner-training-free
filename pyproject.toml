@@ -18,8 +18,10 @@ model = [
   "transformers>=4.51,<5",
 ]
 syntax = ["tree-sitter>=0.23", "tree-sitter-language-pack>=0.7"]
+agent = ["PyYAML>=6.0"]
 dev = [
   "numpy>=1.26",
+  "PyYAML>=6.0",
   "pytest>=8.0",
   "ruff>=0.8",
 ]
@@ -36,6 +38,7 @@ include = [
   "tasks*",
   "evaluation*",
   "integrations*",
+  "agent_eval*",
   "scripts*",
 ]
 

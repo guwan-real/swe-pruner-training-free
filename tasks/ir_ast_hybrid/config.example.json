@@ -1,0 +1,35 @@
+{
+  "weights": {
+    "ir": 0.55,
+    "execution_ast": 0.45
+  },
+  "mandatory_reason_prefixes": [
+    "query_symbol_match",
+    "source_error",
+    "traceback_",
+    "test_",
+    "diff_",
+    "grep_hit",
+    "tree_query_hit"
+  ],
+  "show_line_numbers": false,
+  "ir": {
+    "weights": {
+      "bm25": 1.0,
+      "identifier": 2.0,
+      "path": 0.75,
+      "recent": 1.0,
+      "structure": 0.35,
+      "error": 1.0,
+      "window": 0.25
+    },
+    "preserve_structure": true,
+    "show_line_numbers": false
+  },
+  "execution_ast": {
+    "preserve_python_skeleton": true,
+    "expand_hit_bodies": true,
+    "expand_one_hop": true,
+    "show_line_numbers": false
+  }
+}
