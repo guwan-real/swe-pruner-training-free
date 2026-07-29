@@ -62,19 +62,22 @@ bash scripts/run_local_checks.sh
 ```
 
 服务器已经启动 `qwen3.5-27b` vLLM（端口 `8015`）且安装了带 pruning
-hook 的 mini-swe-agent 时，零参数真实实验入口为：
+hook 的 mini-swe-agent 时，先做真实一题 smoke：
 
 ```bash
-bash scripts/run_server_experiments.sh
+bash scripts/run_server_experiments.sh preflight
+bash scripts/run_server_experiments.sh smoke
 ```
 
 它会自动关闭继承的 uv/venv、激活 conda、读取 vLLM model id，运行
-baseline/IR/AST/IR+AST 四组相同 SWE-Bench Verified 任务。随后使用同一
-脚本的 `status`、`results`、`grade` 子命令查看轨迹统计与官方 Resolve
-Rate。默认 `TASK_SLICE=0:10`；这是真实十题 smoke，不是 replay。
+baseline/IR 两组相同的单个 SWE-Bench Verified 任务。随后使用同一脚本
+的 `status`、`results`、`grade` 子命令查看轨迹统计与官方 Resolve
+Rate。通过后再用零参数入口运行默认前 10 题的
+baseline/IR/AST/IR+AST；两者都不是 replay。
 
 完整数据格式见 `docs/INPUT_FORMAT.md`，逐项实现证据见
 `docs/IMPLEMENTATION_MAP.md`，实验步骤见 `docs/EXPERIMENT_GUIDE.md`，
 服务器部署见 `docs/SERVER_GUIDE.md`，接入 agent 的位置见
 `docs/INTEGRATION_GUIDE.md`，实际多实验参数见
-`docs/CODING_AGENT_EXPERIMENTS.md`。
+`docs/CODING_AGENT_EXPERIMENTS.md`。让服务器本地 agent 接手时，直接
+给它阅读 `docs/SERVER_AGENT_HANDOFF.md`。

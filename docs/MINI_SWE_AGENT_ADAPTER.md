@@ -3,6 +3,11 @@
 本仓库不维护第二份 mini-swe-agent。端到端脚本只要求服务器现有安装满足
 一个很小的 pruning contract。
 
+mini-swe-agent 可以继续位于原有 uv/venv。启动脚本会在清理当前 uv 前
+保存 `mini-extra` 的绝对路径，并解析该安装自己的 Python 来做 contract
+检查；不会错误地要求本项目 conda 也安装一份 mini-swe-agent。必要时在
+`server_profile.env` 中显式写 `MINI_EXTRA_BIN` 和 `MINI_SWE_PYTHON`。
+
 ## 自动检查的能力
 
 `bash scripts/run_server_experiments.sh preflight` 会确认：
@@ -43,9 +48,14 @@ SWE-Pruner 版本等价的以下最小适配：
 审计。应使用服务器已有的 pruning-capable mini-swe-agent 安装，或在其
 自身仓库中完成上述小改动后重新安装。
 
-如 base config 不在包内默认位置，可只指定路径：
+如 base config 不在包内默认位置，可指定源码根目录让脚本寻找唯一兼容
+模板；存在多个候选时必须显式指定，脚本不会猜：
 
 ```bash
+MINI_SWE_AGENT_ROOT=/absolute/path/to/mini-swe-agent--with-pruning \
 MINI_SWE_BASE_CONFIG=/absolute/path/to/pruner.yaml \
 bash scripts/run_server_experiments.sh preflight
 ```
+
+推荐把这些路径写入不提交的 `server_profile.env`，模板见
+`configs/server_profile.example.env`。

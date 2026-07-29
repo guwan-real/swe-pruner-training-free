@@ -9,6 +9,7 @@ from agent_eval.aggregate import convert_predictions, summarize_run
 from agent_eval.config_adapter import (
     adapt_config,
     hosted_vllm_model_name,
+    resolve_pruning_base_config,
     validate_pruning_contract,
 )
 
@@ -56,6 +57,40 @@ def test_config_adapter_rejects_standard_agent_without_pruner_hook() -> None:
 
 def test_hosted_vllm_provider_is_not_duplicated() -> None:
     assert hosted_vllm_model_name("hosted_vllm/model") == "hosted_vllm/model"
+
+
+def test_base_config_resolver_finds_one_compatible_template(tmp_path: Path) -> None:
+    import yaml
+
+    primary = tmp_path / "installed" / "swebench.yaml"
+    primary.parent.mkdir()
+    primary.write_text("agent:\n  system_template: plain\n", encoding="utf-8")
+    template = tmp_path / "agent" / "templates" / "qwen" / "pruner.yaml"
+    template.parent.mkdir(parents=True)
+    template.write_text(
+        yaml.safe_dump(_base_config(), sort_keys=False),
+        encoding="utf-8",
+    )
+
+    resolved = resolve_pruning_base_config(
+        primary,
+        search_root=tmp_path / "agent",
+    )
+    assert resolved == template.resolve()
+
+
+def test_base_config_resolver_does_not_guess_between_templates(tmp_path: Path) -> None:
+    import yaml
+
+    templates = tmp_path / "agent" / "templates"
+    templates.mkdir(parents=True)
+    for name in ("one.yaml", "two.yaml"):
+        (templates / name).write_text(
+            yaml.safe_dump(_base_config(), sort_keys=False),
+            encoding="utf-8",
+        )
+    with pytest.raises(RuntimeError, match="MINI_SWE_BASE_CONFIG"):
+        resolve_pruning_base_config(None, search_root=tmp_path / "agent")
 
 
 def test_agent_summary_and_prediction_conversion(tmp_path: Path) -> None:

@@ -13,6 +13,10 @@
 split、slice/filter 和 worker 数。baseline 通过 agent 自己的
 `--disable-pruner` 关闭剪枝。
 
+本项目 conda 与 mini-swe-agent 环境可以分离。`MINI_EXTRA_BIN` 指向已有
+pruning 版 agent 的绝对路径，脚本使用其同环境 Python 做 contract
+校验；pruner 服务仍由本项目 conda 运行。
+
 ## 启动阶段
 
 零参数 launch 默认运行 SWE-Bench Verified test 前 10 题：
@@ -43,6 +47,9 @@ bash scripts/run_server_experiments.sh
 注意 `keep_ratio=1.0` 仍使用带 context-focus prompt 的 pruning arm，
 适合控制 prompt/protocol 变化；真正的原始 baseline 仍是独立
 `baseline`。
+
+旧 `threshold` 字段只承担兼容传输：配置适配器固定使用
+`threshold=1-keep_ratio`。它不是训练模型概率，manifest 会记录该语义。
 
 默认所有 arm 并行，共享 vLLM。研究端到端延迟时建议
 `PARALLEL_ARMS=0`，避免不同 arm 的排队互相污染。
@@ -79,3 +86,5 @@ bash scripts/run_server_experiments.sh
 - IR/AST/hybrid 不调用额外模型，`model_forward_count=0`；
 - PPL/hidden/attention/influence 不应伪装成这三组 online CPU 方法，
   它们需要单独的本地模型或 serving signal 集成。
+- 原始/保留 observation token 是兼容服务的轻量估算；端到端
+  prompt/completion token 以 vLLM trajectory usage 为准。

@@ -3,6 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SERVER_PROFILE="${SERVER_PROFILE:-$REPO_ROOT/server_profile.env}"
+if [[ -f "$SERVER_PROFILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$SERVER_PROFILE"
+fi
+INHERITED_MINI_EXTRA_BIN="${MINI_EXTRA_BIN:-$(command -v mini-extra 2>/dev/null || true)}"
 
 ENV_NAME="${ENV_NAME:-swepruner-training-free}"
 BASE_DIR="${BASE_DIR:-/home/yuantao/futao}"
@@ -23,6 +29,8 @@ METHODS="${METHODS:-ir_structural,execution_ast,ir_ast_hybrid}"
 PARALLEL_ARMS="${PARALLEL_ARMS:-1}"
 PRUNER_MIN_CHARS="${PRUNER_MIN_CHARS:-500}"
 REQUEST_TIMEOUT="${REQUEST_TIMEOUT:-180}"
+MIN_FREE_DISK_GB="${MIN_FREE_DISK_GB:-10}"
+WARN_FREE_DISK_GB="${WARN_FREE_DISK_GB:-50}"
 
 MODE="launch"
 DRY_RUN=0
@@ -66,17 +74,25 @@ Defaults:
   PARALLEL_ARMS=1
 
 Useful overrides:
+  SERVER_PROFILE        Local env file; defaults to untracked ./server_profile.env.
   VLLM_MODEL_ID        Exact id returned by GET /v1/models; otherwise auto-detected.
+  MINI_EXTRA_BIN       Existing pruning-capable mini-extra executable (may be in another venv).
+  MINI_SWE_PYTHON      Python executable belonging to that mini-swe-agent install.
+  MINI_SWE_AGENT_ROOT  Existing mini-swe-agent source root; used to discover one template.
   MINI_SWE_BASE_CONFIG Pruning-capable mini-swe-agent swebench YAML.
+  SWEBENCH_PYTHON      Python with swebench.harness installed for the grade command.
   TASK_SLICE           Same syntax as mini-extra --slice. Set to empty for full set.
   TASK_FILTER          Regex passed to mini-extra --filter.
   KEEP_RATIOS          Comma-separated retained ratios, e.g. 0.35,0.5,0.7.
   METHODS              Comma-separated methods from the default list.
   RUN_TAG               Stable output name. Required to resume a chosen run.
   PARALLEL_ARMS=0       Run experiment arms sequentially in the foreground.
+  MIN_FREE_DISK_GB=10   Hard minimum on repository and Docker filesystems.
+  WARN_FREE_DISK_GB=50  Print a warning below this free-space level.
 
 The script removes an active uv/venv from its child environment before activating
-the conda environment. API keys are not committed; local vLLM defaults to EMPTY.
+the conda environment. It keeps using MINI_EXTRA_BIN through its absolute path, so
+mini-swe-agent may remain in an existing separate venv. API keys are not committed.
 EOF
 }
 
@@ -182,7 +198,48 @@ activate_runtime() {
   cd "$REPO_ROOT"
   "$PYTHON_BIN" -c \
     'import sys, tf_pruning; assert sys.version_info >= (3, 11), sys.version'
-  MINI_EXTRA_BIN="${MINI_EXTRA_BIN:-$(command -v mini-extra || true)}"
+  local active_mini
+  active_mini="$(command -v mini-extra 2>/dev/null || true)"
+  MINI_EXTRA_BIN="${MINI_EXTRA_BIN:-${INHERITED_MINI_EXTRA_BIN:-$active_mini}}"
+  if [[ -n "$MINI_EXTRA_BIN" && "$MINI_EXTRA_BIN" != */* ]]; then
+    MINI_EXTRA_BIN="$(command -v "$MINI_EXTRA_BIN" 2>/dev/null || true)"
+  fi
+  if [[ -n "$MINI_EXTRA_BIN" && -e "$MINI_EXTRA_BIN" ]]; then
+    MINI_EXTRA_BIN="$(
+      cd "$(dirname "$MINI_EXTRA_BIN")"
+      printf '%s/%s\n' "$PWD" "$(basename "$MINI_EXTRA_BIN")"
+    )"
+  fi
+}
+
+resolve_mini_python() {
+  local candidate="${MINI_SWE_PYTHON:-}"
+  if [[ -n "$candidate" ]]; then
+    if [[ "$candidate" != */* ]]; then
+      candidate="$(command -v "$candidate" 2>/dev/null || true)"
+    fi
+    [[ -x "$candidate" ]] || fail "MINI_SWE_PYTHON is not executable: ${candidate:-missing}"
+    printf '%s\n' "$candidate"
+    return
+  fi
+
+  local mini_dir
+  mini_dir="$(dirname "$MINI_EXTRA_BIN")"
+  for candidate in "$mini_dir/python" "$mini_dir/python3"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+  done
+
+  local shebang
+  shebang="$(head -n 1 "$MINI_EXTRA_BIN" 2>/dev/null || true)"
+  candidate="${shebang#\#!}"
+  if [[ "$candidate" = /* && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return
+  fi
+  fail "cannot resolve mini-swe-agent Python; set MINI_SWE_PYTHON explicitly"
 }
 
 discover_vllm_model() {
@@ -219,18 +276,105 @@ PY
 }
 
 resolve_base_config() {
-  "$PYTHON_BIN" - "${MINI_SWE_BASE_CONFIG:-}" <<'PY'
+  local explicit="${MINI_SWE_BASE_CONFIG:-}"
+  local primary="$explicit"
+  if [[ -z "$primary" ]]; then
+    primary="$(
+      "$MINI_SWE_PYTHON_BIN" - <<'PY' 2>/dev/null || true
+from pathlib import Path
+from minisweagent.config import builtin_config_dir
+
+print((Path(builtin_config_dir) / "extra" / "swebench.yaml").resolve())
+PY
+    )"
+  fi
+  "$PYTHON_BIN" - \
+    "$primary" \
+    "${MINI_SWE_AGENT_ROOT:-}" \
+    "$([[ -n "$explicit" ]] && printf '1' || printf '0')" <<'PY'
 import sys
+from pathlib import Path
 from agent_eval.config_adapter import (
-    discover_base_config,
-    load_yaml,
-    validate_pruning_contract,
+    resolve_pruning_base_config,
 )
 
-path = discover_base_config(sys.argv[1] or None)
-validate_pruning_contract(load_yaml(path))
+primary = Path(sys.argv[1]) if sys.argv[1] else None
+search_root = Path(sys.argv[2]) if sys.argv[2] else None
+path = resolve_pruning_base_config(
+    primary,
+    search_root=search_root,
+    explicit=sys.argv[3] == "1",
+)
 print(path)
 PY
+}
+
+check_disk_path() {
+  local label="$1"
+  local path="$2"
+  local probe="$path"
+  while [[ ! -e "$probe" && "$probe" != "/" ]]; do
+    probe="$(dirname "$probe")"
+  done
+  if [[ ! -e "$probe" ]]; then
+    log "WARNING: cannot locate an accessible filesystem path for $label at $path"
+    return 0
+  fi
+  if [[ "$probe" != "$path" ]]; then
+    log "WARNING: $label path is not directly accessible; checking nearest ancestor $probe"
+  fi
+  local available_kb
+  local available_gb
+  available_kb="$(df -Pk "$probe" | awk 'NR == 2 {print $4}')"
+  [[ "$available_kb" =~ ^[0-9]+$ ]] \
+    || fail "could not determine free disk space for $label at $probe"
+  available_gb=$((available_kb / 1024 / 1024))
+  if ((available_gb < MIN_FREE_DISK_GB)); then
+    fail "$label filesystem has ${available_gb}GB free at $probe; minimum is ${MIN_FREE_DISK_GB}GB"
+  fi
+  if ((available_gb < WARN_FREE_DISK_GB)); then
+    log "WARNING: $label filesystem has only ${available_gb}GB free at $probe"
+  else
+    log "$label disk ready: ${available_gb}GB free at $probe"
+  fi
+}
+
+check_disk_capacity() {
+  [[ "$MIN_FREE_DISK_GB" =~ ^[0-9]+$ ]] \
+    || fail "MIN_FREE_DISK_GB must be a non-negative integer"
+  [[ "$WARN_FREE_DISK_GB" =~ ^[0-9]+$ ]] \
+    || fail "WARN_FREE_DISK_GB must be a non-negative integer"
+  check_disk_path "workspace" "$REPO_ROOT"
+  local docker_root
+  docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  if [[ -n "$docker_root" ]]; then
+    check_disk_path "Docker" "$docker_root"
+  else
+    log "WARNING: Docker root directory could not be determined"
+  fi
+}
+
+resolve_grader_python() {
+  local candidate
+  local resolved
+  local -a candidates=(
+    "${SWEBENCH_PYTHON:-}"
+    "${MINI_SWE_PYTHON_BIN:-}"
+    "$PYTHON_BIN"
+  )
+  for candidate in "${candidates[@]}"; do
+    [[ -n "$candidate" ]] || continue
+    resolved="$candidate"
+    if [[ "$resolved" != */* ]]; then
+      resolved="$(command -v "$resolved" 2>/dev/null || true)"
+    fi
+    [[ -x "$resolved" ]] || continue
+    if "$resolved" -c 'import swebench.harness.run_evaluation' >/dev/null 2>&1; then
+      printf '%s\n' "$resolved"
+      return 0
+    fi
+  done
+  return 1
 }
 
 preflight() {
@@ -238,14 +382,20 @@ preflight() {
     RESOLVED_MODEL_ID="${VLLM_MODEL_ID:-qwen3.5-27b-dry-run}"
     RESOLVED_BASE_CONFIG="${MINI_SWE_BASE_CONFIG:-/tmp/mini-swe-pruning.yaml}"
     MINI_EXTRA_BIN="${MINI_EXTRA_BIN:-mini-extra}"
+    MINI_SWE_PYTHON_BIN="${MINI_SWE_PYTHON:-$PYTHON_BIN}"
     log "SKIP_PREFLIGHT=1; external checks skipped"
     return
   }
-  [[ -n "$MINI_EXTRA_BIN" ]] \
-    || fail "mini-extra is not installed in conda env '$ENV_NAME'"
+  if [[ -n "$MINI_EXTRA_BIN" && "$MINI_EXTRA_BIN" != */* ]]; then
+    MINI_EXTRA_BIN="$(command -v "$MINI_EXTRA_BIN" 2>/dev/null || true)"
+  fi
+  [[ -x "$MINI_EXTRA_BIN" ]] \
+    || fail "pruning-capable mini-extra was not found; set MINI_EXTRA_BIN to its absolute path"
+  MINI_SWE_PYTHON_BIN="$(resolve_mini_python)"
   command -v docker >/dev/null 2>&1 || fail "docker is required for SWE-Bench"
   docker info >/dev/null 2>&1 \
     || fail "Docker daemon is unavailable or the current user lacks permission"
+  check_disk_capacity
 
   local help_text
   help_text="$("$MINI_EXTRA_BIN" swebench --help 2>&1)" \
@@ -256,7 +406,7 @@ preflight() {
     || fail "installed mini-swe-agent lacks --disable-pruner; baseline would not be comparable"
   grep -q -- "--slice" <<<"$help_text" \
     || fail "installed mini-swe-agent lacks the required --slice option"
-  if ! "$PYTHON_BIN" - <<'PY'
+  if ! "$MINI_SWE_PYTHON_BIN" - <<'PY'
 from minisweagent.agents.default import AgentConfig
 from minisweagent.utils.pruner import PruneResponse, PrunerRequest
 
@@ -288,12 +438,21 @@ PY
     || fail "cannot query vLLM at $VLLM_API_BASE"
   RESOLVED_BASE_CONFIG="$(resolve_base_config)" \
     || fail "mini-swe-agent pruning config contract check failed"
-  if [[ "${RESOLVED_MODEL_ID,,}" != *qwen3.5* ]]; then
+  local normalized_model_id
+  normalized_model_id="$(printf '%s' "$RESOLVED_MODEL_ID" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$normalized_model_id" != *qwen3.5* ]]; then
     log "WARNING: vLLM model id does not contain qwen3.5: $RESOLVED_MODEL_ID"
   fi
   log "vLLM ready: $VLLM_API_BASE model=$RESOLVED_MODEL_ID"
-  log "mini-swe-agent ready: $MINI_EXTRA_BIN"
+  log "mini-swe-agent CLI: $MINI_EXTRA_BIN"
+  log "mini-swe-agent Python: $MINI_SWE_PYTHON_BIN"
   log "pruning config: $RESOLVED_BASE_CONFIG"
+  local grader_python
+  if grader_python="$(resolve_grader_python)"; then
+    log "SWE-Bench grader ready: $grader_python"
+  else
+    log "WARNING: SWE-Bench grader Python not found; generation can run, grade requires SWEBENCH_PYTHON"
+  fi
 }
 
 method_port() {
@@ -481,7 +640,9 @@ write_manifest() {
     "$AGENT_WORKERS" \
     "$METHODS" \
     "$KEEP_RATIOS" \
-    "$RESOLVED_BASE_CONFIG" <<'PY'
+    "$RESOLVED_BASE_CONFIG" \
+    "$MINI_EXTRA_BIN" \
+    "$MINI_SWE_PYTHON_BIN" <<'PY'
 import json
 import subprocess
 import sys
@@ -499,6 +660,8 @@ from datetime import datetime, timezone
     methods,
     keep_ratios,
     base_config,
+    mini_extra_bin,
+    mini_swe_python,
 ) = sys.argv[1:]
 payload = {
     "created_at": datetime.now(timezone.utc).isoformat(),
@@ -517,6 +680,9 @@ payload = {
         float(item) for item in keep_ratios.replace(",", " ").split()
     ],
     "mini_swe_base_config": base_config,
+    "mini_extra_bin": mini_extra_bin,
+    "mini_swe_python": mini_swe_python,
+    "budget_semantics": "mini_threshold = 1 - training_free_keep_ratio",
 }
 with open(output, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, ensure_ascii=False, indent=2)
@@ -667,8 +833,14 @@ show_results() {
 grade_results() {
   activate_runtime
   resolve_run_root
-  "$PYTHON_BIN" -c 'import swebench.harness.run_evaluation' \
-    || fail "SWE-Bench harness is not installed in '$ENV_NAME'"
+  if [[ -n "$MINI_EXTRA_BIN" && -x "$MINI_EXTRA_BIN" ]]; then
+    MINI_SWE_PYTHON_BIN="$(resolve_mini_python)"
+  else
+    MINI_SWE_PYTHON_BIN=""
+  fi
+  local grader_python
+  grader_python="$(resolve_grader_python)" \
+    || fail "SWE-Bench harness was not found; set SWEBENCH_PYTHON to its Python executable"
   local arm_dir
   local arm
   local predictions
@@ -692,7 +864,7 @@ grade_results() {
     log "grading $arm with official SWE-Bench harness"
     (
       cd "$grade_dir"
-      "$PYTHON_BIN" -m swebench.harness.run_evaluation \
+      "$grader_python" -m swebench.harness.run_evaluation \
         --dataset_name princeton-nlp/SWE-bench_Verified \
         --predictions_path "$jsonl" \
         --max_workers "$GRADER_WORKERS" \

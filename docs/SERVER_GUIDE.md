@@ -11,6 +11,9 @@ vLLM：http://127.0.0.1:8015/v1
 Agent：服务器已经安装的 mini-swe-agent
 ```
 
+这里不要求 agent 安装在同一个 conda。推荐保持现有 pruning 版
+mini-swe-agent venv 不变，本项目 conda 仅运行 CPU pruner。
+
 ## 真实实验的数据流
 
 ```text
@@ -37,18 +40,29 @@ preflight 会直接失败。适配契约见 `docs/MINI_SWE_AGENT_ADAPTER.md`。
 ```bash
 git pull --ff-only
 bash scripts/run_server_experiments.sh preflight
-bash scripts/run_server_experiments.sh
+bash scripts/run_server_experiments.sh smoke
 ```
+
+smoke 与官方 grade 通过后，再用零参数命令启动默认 10 题的四组实验。
+
+如果 conda 尚未创建，`scripts/create_server_conda.sh` 默认使用轻量
+`PROFILE=agent`，不会下载 PyTorch/Transformers。只有第二阶段本地模型
+方法才显式使用 `PROFILE=model`。
+
+先将 `configs/server_profile.example.env` 复制为仓库根目录的
+`server_profile.env`，填写现有 mini-swe-agent、pruning YAML 和可选
+grader Python 的绝对路径。该文件不会被 Git 跟踪。
 
 脚本会在自己的子进程中先清理当前 uv/venv，再激活 conda。它会：
 
 1. 请求 `http://127.0.0.1:8015/v1/models`，优先选择 id 中含
    `qwen3.5` 的模型；
-2. 检查 Docker daemon 和 mini-swe-agent pruning hook；
-3. 以 localhost 端口 `8111/8112/8113` 启动 IR、AST、IR+AST 服务；
-4. 在完全相同的 SWE-Bench Verified task slice 上启动 baseline 和三个
+2. 用现有 mini-swe-agent 自己的 Python 检查 pruning hook；
+3. 检查 Docker daemon、workspace/Docker filesystem 磁盘；
+4. 以 localhost 端口 `8111/8112/8113` 启动 IR、AST、IR+AST 服务；
+5. 在完全相同的 SWE-Bench Verified task slice 上启动 baseline 和三个
    training-free pruning arm；
-5. 为每组保存独立的 config、PID、日志、trajectory 和 `preds.json`。
+6. 为每组保存独立的 config、PID、日志、trajectory 和 `preds.json`。
 
 默认 `TASK_SLICE=0:10`，也就是真实 benchmark 的前 10 题。不存在 replay
 或 demo 回退。
@@ -120,6 +134,9 @@ bash scripts/run_server_experiments.sh preflight
 
 本地 vLLM 默认使用占位 key `EMPTY`。如果服务启用了鉴权，只在服务器
 环境中设置 `VLLM_API_KEY`，不要写入 config 或提交 Git。
+
+给服务器本地 agent 的完整路径发现、preflight、smoke 和验收规则见
+`docs/SERVER_AGENT_HANDOFF.md`。
 
 ## 离线方法仍然保留
 
