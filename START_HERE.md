@@ -60,6 +60,15 @@ tf-prune-serve \
 bash scripts/run_local_checks.sh
 ```
 
+服务器已经安装环境时，零参数并行入口为：
+
+```bash
+bash scripts/run_server_experiments.sh
+```
+
+它会自动关闭继承的 uv/venv、激活 conda、准备 replay 并启动独立日志和
+结果目录。随后使用同一脚本的 `status`、`results` 子命令查看运行情况。
+
 完整数据格式见 `docs/INPUT_FORMAT.md`，逐项实现证据见
 `docs/IMPLEMENTATION_MAP.md`，实验步骤见 `docs/EXPERIMENT_GUIDE.md`，
 服务器部署见 `docs/SERVER_GUIDE.md`，接入 agent 的位置见

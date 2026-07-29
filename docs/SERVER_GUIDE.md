@@ -45,7 +45,61 @@ TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 \
 bash scripts/create_server_conda.sh swepruner-training-free
 ```
 
-## 3. 模型与数组目录
+## 3. 一键启动并行实验
+
+环境安装完成后不需要手工复制多条实验命令：
+
+```bash
+cd /home/yuantao/futao/swepruner_training_free_workspace/swe-pruner-training-free
+git pull --ff-only
+bash scripts/run_server_experiments.sh
+```
+
+新终端即使默认激活了 uv 项目环境也可以直接运行。脚本会在自己的
+子进程中：
+
+1. 从 `PATH` 移除当前 `VIRTUAL_ENV/bin` 并清理 uv/venv 环境变量；
+2. 激活 `swepruner-training-free` conda 环境；
+3. 优先复用 `$WORK_DIR/replay/replay_200.jsonl`；
+4. 若 replay 不存在，则从旧项目 `artifacts/combined_2k/pruning_sft.jsonl`
+   转换最多 200 条；
+5. 若旧数据也不存在，则明确告警并回退到仓库自带 demo；
+6. 用 `nohup` 并行启动 IR 与 AST 的五档预算矩阵。
+
+脚本只改变自己的子进程环境，不会修改调用它的父终端。查看进度和结果：
+
+```bash
+bash scripts/run_server_experiments.sh status
+bash scripts/run_server_experiments.sh results
+```
+
+只做前台烟测：
+
+```bash
+bash scripts/run_server_experiments.sh smoke
+```
+
+输出分别位于：
+
+```text
+$WORK_DIR/runs/<run_tag>/
+$WORK_DIR/logs/<run_tag>/
+```
+
+以下可选输入存在时，一键脚本会自动增加对应实验：
+
+| 方法 | 自动发现的输入 |
+|---|---|
+| conditional PPL | `$WORK_DIR/local_configs/conditional_ppl.json` |
+| hidden-state | `$WORK_DIR/replay/hidden_signals.jsonl` |
+| attention | `$WORK_DIR/replay/attention_signals.jsonl` |
+| influence oracle | `local_configs/influence_oracle.json` 和 `replay/oracle_50.jsonl` |
+
+PPL 默认使用物理 GPU 0，influence 默认使用物理 GPU 1；可分别通过
+`PPL_GPU`、`INFLUENCE_GPU` 覆盖。运行
+`bash scripts/run_server_experiments.sh --help` 可查看全部环境变量。
+
+## 4. 模型与数组目录
 
 推荐：
 
@@ -81,7 +135,7 @@ python scripts/extract_hf_signals.py \
 `[layers,heads,decode_steps,tokens]`；`token_to_line` 使用 1-based 行号。
 同时生成的 `source_file.request.json` 已写入本地 NPZ 路径，可直接运行。
 
-## 4. 指定 GPU
+## 5. 指定 GPU
 
 先验证与现有 tool wrapper 兼容的 CPU 服务：
 
@@ -129,7 +183,7 @@ python -m tf_pruning.cli evaluate \
   --no-prune-below 0
 ```
 
-## 5. 并行原则
+## 6. 并行原则
 
 - IR/AST 用 CPU，不占 B200；
 - hidden/attention 优先消费推理引擎已经导出的数组，避免额外 forward；

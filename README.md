@@ -37,6 +37,22 @@ python3 -m tf_pruning.cli evaluate \
   --budget-schedule configs/length_aware_budget.json
 ```
 
+服务器环境安装完成后，可以直接用一键脚本并行启动实验：
+
+```bash
+git pull --ff-only
+bash scripts/run_server_experiments.sh
+```
+
+脚本会先移除当前终端继承的 uv/venv 环境，再在子进程中激活
+`swepruner-training-free` conda 环境。默认自动准备最多 200 条 replay，
+并行启动 CPU 上的 `ir_structural` 和 `execution_ast`。查看状态与结果：
+
+```bash
+bash scripts/run_server_experiments.sh status
+bash scripts/run_server_experiments.sh results
+```
+
 兼容官方 `POST /prune` 请求/响应字段的本地服务：
 
 ```bash
