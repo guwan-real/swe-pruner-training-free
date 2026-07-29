@@ -18,8 +18,9 @@ def test_server_script_help() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "launch|smoke|status|results" in completed.stdout
+    assert "preflight|launch|smoke|status|results|grade|stop" in completed.stdout
     assert "active uv/venv" in completed.stdout
+    assert "never falls back" in completed.stdout
 
 
 def test_dry_run_removes_uv_environment_without_writing(tmp_path: Path) -> None:
@@ -33,9 +34,9 @@ def test_dry_run_removes_uv_environment_without_writing(tmp_path: Path) -> None:
             "VIRTUAL_ENV": str(fake_venv),
             "PATH": f"{fake_bin}:{env['PATH']}",
             "SKIP_CONDA": "1",
+            "SKIP_PREFLIGHT": "1",
             "PYTHON_BIN": sys.executable,
             "WORK_DIR": str(work_dir),
-            "OLD_PROJECT_DIR": str(tmp_path / "missing-old-project"),
         }
     )
 
@@ -50,6 +51,8 @@ def test_dry_run_removes_uv_environment_without_writing(tmp_path: Path) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert f"disabled active uv/venv: {fake_venv}" in completed.stderr
-    assert "falling back to bundled demo replay" in completed.stderr
+    assert "arm=baseline" in completed.stderr
+    assert "ir_ast_hybrid_keep50" in completed.stderr
+    assert "replay" not in completed.stderr.lower()
     assert "dry-run complete" in completed.stderr
     assert not work_dir.exists()

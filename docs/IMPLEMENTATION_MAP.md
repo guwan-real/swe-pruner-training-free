@@ -1,6 +1,6 @@
 # 研究方案到代码的映射
 
-本文档用于审计 `deep-research-report.md` 中的六条候选路线是否都已有对应代码。这里的“完成”指本地算法、接口、测试与运行引导完成，不代表已经在 SWE-Bench/SWE-QA 上得到论文结论。
+本文档用于审计 `deep-research-report.md` 中的六条基础候选路线是否都有对应代码，并记录新增 IR+AST 融合组。这里的“完成”指本地算法、接口和运行引导完成，不代表已经得到 benchmark 结论。
 
 ## 两个替换位置
 
@@ -81,6 +81,17 @@ score(line) =
 - 模型调用：无。
 - 测试：`tests/test_execution_ast.py`。
 
+## 7. IR + AST rank fusion
+
+- 代码：`tasks/ir_ast_hybrid/pruner.py`
+- 主类：`IRASTHybridPruner`
+- 已实现：两种异构原始分数的 rank-percentile 归一化；固定
+  `0.55/0.45` 融合；traceback/test/diff/grep/query 等关键执行证据保底；
+  统一 hard budget。
+- 训练依赖：无；融合权重不拟合。
+- 模型调用：无。
+- 测试：`tests/test_ir_ast_hybrid.py`。
+
 ## 共享实验要求
 
 | 报告要求 | 代码证据 |
@@ -95,16 +106,28 @@ score(line) =
 | Pareto 汇总 | `evaluation/matrix.py` |
 | B200/Python 3.11 环境 | `scripts/create_server_conda.sh`、`docs/SERVER_GUIDE.md` |
 | 现有 tool wrapper 接入 | `integrations/middleware.py`、`integrations/http_server.py` |
+| mini-swe-agent + vLLM + SWE-Bench | `scripts/run_server_experiments.sh`、`agent_eval/config_adapter.py` |
+| trajectory/token/prune 汇总 | `agent_eval/aggregate.py` |
+| 官方 Resolve Rate | `scripts/run_server_experiments.sh grade` |
 
-## 尚未声称完成的外部阶段
+## 端到端代码已具备、结果尚未声称完成
+
+服务器入口现在能运行 baseline、IR、AST、IR+AST 的真实
+mini-swe-agent + SWE-Bench Verified 实验，并连接端口 8015 的 OpenAI
+compatible vLLM。它会生成 trajectory、patch、token/prune summary，并
+调用官方 grader。
+
+这只表示实验管线已实现；仓库当前没有声称任何 Resolve Rate 或论文收益。
+
+## 仍属于第二阶段的外部工作
 
 以下事项不属于本仓库当前的本地算法正确性结论：
 
 - 下载/挂载服务器本地模型；
 - 接 patched SGLang 或其他 serving engine；
-- 采集真实 agent trajectory；
 - 运行 SWE-QA、SWE-QA-Pro、SWE-Bench Verified、Oolong 或 Long Code 全量实验；
 - 根据 benchmark 结果调整 rank fusion 与回退阈值。
 
-因此，当前实现证明的是“六条路线可编码、可独立调用、可统一 replay”，
-不把单元测试或服务器烟测结果冒充 benchmark 质量结论。
+因此，当前实现证明的是“基础路线可编码、前三个 CPU online arm 可接入
+coding agent、可统一记录和评分”，不把单元测试、离线 replay 或 agent
+提交 patch 冒充 benchmark Resolve Rate。

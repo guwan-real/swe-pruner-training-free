@@ -13,6 +13,7 @@ METHOD_MODULES: dict[str, str] = {
     "attention_rollout": "tasks.attention_rollout",
     "influence_oracle": "tasks.influence_oracle",
     "execution_ast": "tasks.execution_ast",
+    "ir_ast_hybrid": "tasks.ir_ast_hybrid",
 }
 
 ALIASES: dict[str, str] = {
@@ -22,6 +23,7 @@ ALIASES: dict[str, str] = {
     "attention": "attention_rollout",
     "influence": "influence_oracle",
     "ast": "execution_ast",
+    "hybrid": "ir_ast_hybrid",
 }
 
 

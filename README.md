@@ -1,10 +1,10 @@
 # SWE-Pruner Training-Free Alternatives
 
-这是一个面向 coding agent 的训练免费上下文剪枝实验仓库。它把研究方案中的六条路线拆成六个独立任务，同时提供统一协议、CLI、离线 replay 评测和服务器引导。
+这是一个面向 coding agent 的训练免费上下文剪枝实验仓库。它把研究方案中的六条基础路线拆成独立任务，另提供 IR+AST 融合组，并包含真实 mini-swe-agent + SWE-Bench Verified 端到端入口。
 
 “Training-free”在这里指：**不新增训练好的专用 observation model 或 pruning head**。PPL、hidden state、attention 和 influence 方法仍可读取冻结 backbone 的推理信号，但绝不会更新模型参数。
 
-## 六个实现
+## 实现与端到端实验组
 
 | 方法 | 独立目录 | 训练 | 运行时模型/内部信号 | 主要用途 |
 |---|---|---:|---|---|
@@ -14,6 +14,7 @@
 | Attention rollout / heavy hitter | `tasks/attention_rollout` | 无 | attention tensors | open-weight 推理引擎实验 |
 | 影响函数式贪心删除 | `tasks/influence_oracle` | 无 | 多次冻结模型 forward | 离线 oracle 与排序上界 |
 | 执行信号 + AST 骨架 | `tasks/execution_ast` | 无 | 可选 parser | 稳健回退与 rank fusion |
+| IR + AST rank fusion | `tasks/ir_ast_hybrid` | 无 | 无 | 真实 agent 主实验融合组 |
 
 实现优先级与研究报告一致：IR、hidden-state、influence 是前三组主实验；另外三条也保留为可运行、可评测的独立实现。
 
@@ -37,21 +38,30 @@ python3 -m tf_pruning.cli evaluate \
   --budget-schedule configs/length_aware_budget.json
 ```
 
-服务器环境安装完成后，可以直接用一键脚本并行启动实验：
+服务器环境安装完成、vLLM 已在 `8015` 端口提供
+`qwen3.5-27b`、mini-swe-agent 已安装后，可以直接启动真实 coding-agent
+实验：
 
 ```bash
 git pull --ff-only
 bash scripts/run_server_experiments.sh
 ```
 
-脚本会先移除当前终端继承的 uv/venv 环境，再在子进程中激活
-`swepruner-training-free` conda 环境。默认自动准备最多 200 条 replay，
-并行启动 CPU 上的 `ir_structural` 和 `execution_ast`。查看状态与结果：
+脚本会先移除当前终端继承的 uv/venv，再激活
+`swepruner-training-free` conda 环境；随后校验 vLLM、Docker 与
+mini-swe-agent 的 pruning hook，并在相同 SWE-Bench Verified task slice
+上并行运行 baseline、IR、AST 和 IR+AST。默认是真实的前 10 个任务，
+不会回退到 toy replay。查看状态、汇总和官方评分：
 
 ```bash
 bash scripts/run_server_experiments.sh status
 bash scripts/run_server_experiments.sh results
+bash scripts/run_server_experiments.sh grade
 ```
+
+真实实验的完整说明见 `docs/CODING_AGENT_EXPERIMENTS.md`。本地 vLLM
+model id 会从 `http://127.0.0.1:8015/v1/models` 自动发现；无需把 API
+key 写入仓库。
 
 兼容官方 `POST /prune` 请求/响应字段的本地服务：
 
@@ -111,7 +121,9 @@ training_free_pruning/
 │   ├── hidden_state_similarity/
 │   ├── attention_rollout/
 │   ├── influence_oracle/
-│   └── execution_ast/
+│   ├── execution_ast/
+│   └── ir_ast_hybrid/
+├── agent_eval/                 # mini-swe-agent 配置适配、轨迹/评分汇总
 ├── evaluation/                 # replay 与代理指标
 ├── integrations/               # fail-open middleware 与官方 HTTP 兼容层
 ├── configs/                    # 长度预算与 Pareto 预算
@@ -140,7 +152,7 @@ OUTPUT_DIR/
 └── summary.json
 ```
 
-核心代理指标包括 line precision/recall/F1、required-line recall、critical miss rate、行与估算 token 保留率、方法耗时和模型 forward 次数。真实 agent 实验仍需另外记录 Resolve Rate/Judge Score、端到端 token、API calls、wall time 与 TTFT。
+核心代理指标包括 line precision/recall/F1、required-line recall、critical miss rate、行与估算 token 保留率、方法耗时和模型 forward 次数。真实 agent 脚本会从 trajectory 汇总端到端 token、API calls、观测剪枝率和错误数；运行官方 grader 后填入 Resolve Rate。未评分时 Resolve Rate 明确显示为空，不会把 `Submitted` 或离线 recall 冒充任务成功率。
 
 现有父项目的 `pruning_sft.jsonl`、`swe_pruner_compatible.jsonl` 和
 official-format JSONL 可用 `python -m evaluation.convert_existing`

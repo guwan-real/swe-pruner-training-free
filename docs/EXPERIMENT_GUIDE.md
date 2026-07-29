@@ -83,6 +83,11 @@ bash scripts/run_replay_matrix.sh \
 - 每类 tool 的 critical miss；
 - AST correctness 或等价结构指标。
 
+当前仓库已经为第一阶段提供
+`scripts/run_server_experiments.sh`：连接端口 8015 的 Qwen3.5 vLLM 和
+已安装 mini-swe-agent，比较 no-pruning、IR、AST、IR+AST，并调用官方
+SWE-Bench grader。详见 `docs/CODING_AGENT_EXPERIMENTS.md`。
+
 ## 6. 建议成功门槛
 
 - SWE-QA / SWE-QA-Pro：相对 No Pruning 的 judge score 降低不超过 0.15–0.25，同时端到端 token 降低至少 20%；
