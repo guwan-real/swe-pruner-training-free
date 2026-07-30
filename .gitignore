@@ -17,3 +17,4 @@ models/
 *.pt
 *.pth
 server_profile.env
+posterior_server_profile.env

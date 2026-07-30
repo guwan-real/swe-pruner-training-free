@@ -42,3 +42,5 @@ jobs:
           tf-prune methods
           tf-prune-serve --help
           tf-extract-signals --help
+          posterior-prune-serve --help
+          posterior-prune-preflight --help

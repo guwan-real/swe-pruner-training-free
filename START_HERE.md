@@ -75,6 +75,19 @@ baseline/IR 两组相同的单个 SWE-Bench Verified 任务。随后使用同一
 Rate。通过后再用零参数入口运行默认前 10 题的
 baseline/IR/AST/IR+AST；两者都不是 replay。
 
+如果实验问题是“不训练分类头，直接利用已经生成的 next action 做后验
+剪枝”，不要使用上面的旧 `/prune` 脚本。改用隔离入口：
+
+```bash
+bash scripts/run_posterior_swebench.sh preflight
+bash scripts/run_posterior_swebench.sh smoke
+bash scripts/run_posterior_swebench.sh launch
+```
+
+其时序、额外 vLLM forward 与五组默认实验见
+`docs/POSTERIOR_PRUNING_DESIGN.md` 和
+`docs/POSTERIOR_SERVER_HANDOFF.md`。
+
 完整数据格式见 `docs/INPUT_FORMAT.md`，逐项实现证据见
 `docs/IMPLEMENTATION_MAP.md`，实验步骤见 `docs/EXPERIMENT_GUIDE.md`，
 服务器部署见 `docs/SERVER_GUIDE.md`，接入 agent 的位置见

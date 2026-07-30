@@ -30,6 +30,8 @@ dev = [
 tf-prune = "tf_pruning.cli:main"
 tf-extract-signals = "scripts.extract_hf_signals:main"
 tf-prune-serve = "integrations.http_server:main"
+posterior-prune-serve = "posterior_pruning.http_server:main"
+posterior-prune-preflight = "posterior_pruning.preflight:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -40,6 +42,7 @@ include = [
   "integrations*",
   "agent_eval*",
   "scripts*",
+  "posterior_pruning*",
 ]
 
 [tool.pytest.ini_options]

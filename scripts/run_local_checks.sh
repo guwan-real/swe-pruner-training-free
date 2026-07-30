@@ -21,6 +21,8 @@ if [[ -z "${PYTHON_BIN:-}" ]]; then
 fi
 
 "$PYTHON_BIN" -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
-"$PYTHON_BIN" -m compileall -q tf_pruning tasks evaluation tests
+"$PYTHON_BIN" -m compileall -q \
+  tf_pruning tasks evaluation integrations agent_eval posterior_pruning tests
 "$PYTHON_BIN" -m pytest
 "$PYTHON_BIN" -m tf_pruning.cli methods
+"$PYTHON_BIN" -m posterior_pruning.http_server --help >/dev/null

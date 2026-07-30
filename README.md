@@ -4,6 +4,12 @@
 
 “Training-free”在这里指：**不新增训练好的专用 observation model 或 pruning head**。PPL、hidden state、attention 和 influence 方法仍可读取冻结 backbone 的推理信号，但绝不会更新模型参数。
 
+新增的真实后验实验完全隔离在 `posterior_pruning/`：agent 先用完整
+observation 生成 next action，再用同一个冻结 Qwen vLLM 比较该动作在
+完整/候选 observation 下的 log likelihood，剪枝只影响后续 turn。它不走
+旧 `{query, code, threshold}` `/prune` 契约，也不与旧 IR/AST
+实现耦合。设计见 `docs/POSTERIOR_PRUNING_DESIGN.md`。
+
 ## 实现与端到端实验组
 
 | 方法 | 独立目录 | 训练 | 运行时模型/内部信号 | 主要用途 |
@@ -69,6 +75,18 @@ key 写入仓库。
 `docs/SERVER_AGENT_HANDOFF.md`。它明确区分本项目 conda、已有
 mini-swe-agent venv 和 grader 环境。
 
+运行 Qwen 动作后验的独立入口：
+
+```bash
+bash scripts/run_posterior_swebench.sh preflight
+bash scripts/run_posterior_swebench.sh smoke
+bash scripts/run_posterior_swebench.sh launch
+```
+
+默认 `launch` 同时生成 baseline、single verify、budget search、greedy
+blocks、block influence 五组真实 SWE-Bench 实验。服务器本地 agent
+应先读 `docs/POSTERIOR_SERVER_HANDOFF.md`。
+
 兼容官方 `POST /prune` 请求/响应字段的本地服务：
 
 ```bash
@@ -132,6 +150,7 @@ training_free_pruning/
 ├── agent_eval/                 # mini-swe-agent 配置适配、轨迹/评分汇总
 ├── evaluation/                 # replay 与代理指标
 ├── integrations/               # fail-open middleware 与官方 HTTP 兼容层
+├── posterior_pruning/          # 隔离的 post-action 后验协议、方法、服务与 mini adapter
 ├── configs/                    # 长度预算与 Pareto 预算
 ├── examples/                   # 请求和 replay 样例
 ├── scripts/                    # 本地/服务器/实验脚本
