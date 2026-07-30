@@ -61,36 +61,32 @@ tf-prune-serve \
 bash scripts/run_local_checks.sh
 ```
 
-服务器已经启动 `qwen3.5-27b` vLLM（端口 `8015`）且安装了带 pruning
-hook 的 mini-swe-agent 时，先做真实一题 smoke：
+服务器已经启动 `Qwen3.5-27B` vLLM（端口 `8015`）且已有
+mini-swe-agent 时，零额外模型调用的工具边界入口就是主实验：
 
 ```bash
-bash scripts/run_server_experiments.sh preflight
-bash scripts/run_server_experiments.sh smoke
+bash scripts/create_server_conda.sh
+cp configs/zero_forward_server_profile.example.env zero_forward_server_profile.env
+# 编辑 MINI_SWE_PYTHON；自定义 mini YAML 时再设置 MINI_SWE_BASE_CONFIG
+bash scripts/run_zero_forward_swebench.sh preflight
+bash scripts/run_zero_forward_swebench.sh smoke
+bash scripts/run_zero_forward_swebench.sh launch
 ```
 
-它会自动关闭继承的 uv/venv、激活 conda、读取 vLLM model id，运行
-baseline/IR 两组相同的单个 SWE-Bench Verified 任务。随后使用同一脚本
-的 `status`、`results`、`grade` 子命令查看轨迹统计与官方 Resolve
-Rate。通过后再用零参数入口运行默认前 10 题的
-baseline/IR/AST/IR+AST；两者都不是 replay。
+环境创建脚本和启动器会先关闭继承的 uv/venv，再激活项目 conda。该入口
+在 `DefaultAgent.execute_actions()` 中拦截原始工具输出，在 observation
+入模之前压缩；pruner forward/token 固定为 0，原文通过随机 ID 可恢复。
+`smoke` 比较同一题的 baseline 与推荐方法，`launch` 运行五组真实
+SWE-Bench 实验。时序、实验组与服务器配置见
+`docs/ZERO_FORWARD_PRUNING_DESIGN.md` 和
+`docs/ZERO_FORWARD_SERVER_HANDOFF.md`。
 
-如果实验问题是“不训练分类头，直接利用已经生成的 next action 做后验
-剪枝”，不要使用上面的旧 `/prune` 脚本。改用隔离入口：
-
-```bash
-bash scripts/run_posterior_swebench.sh preflight
-bash scripts/run_posterior_swebench.sh smoke
-bash scripts/run_posterior_swebench.sh launch
-```
-
-其时序、额外 vLLM forward 与五组默认实验见
-`docs/POSTERIOR_PRUNING_DESIGN.md` 和
-`docs/POSTERIOR_SERVER_HANDOFF.md`。
+旧 `run_server_experiments.sh` 仅用于此前的 IR/AST/replay ablation，不
+用于这次主实验；需要多次冻结模型 forward 的方法也不会由零 forward
+启动器加载。
 
 完整数据格式见 `docs/INPUT_FORMAT.md`，逐项实现证据见
 `docs/IMPLEMENTATION_MAP.md`，实验步骤见 `docs/EXPERIMENT_GUIDE.md`，
 服务器部署见 `docs/SERVER_GUIDE.md`，接入 agent 的位置见
-`docs/INTEGRATION_GUIDE.md`，实际多实验参数见
-`docs/CODING_AGENT_EXPERIMENTS.md`。让服务器本地 agent 接手时，直接
-给它阅读 `docs/SERVER_AGENT_HANDOFF.md`。
+`docs/INTEGRATION_GUIDE.md`。让服务器本地 agent 接手本次实验时，直接
+给它阅读 `docs/ZERO_FORWARD_SERVER_HANDOFF.md`。

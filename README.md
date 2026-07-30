@@ -4,11 +4,11 @@
 
 “Training-free”在这里指：**不新增训练好的专用 observation model 或 pruning head**。PPL、hidden state、attention 和 influence 方法仍可读取冻结 backbone 的推理信号，但绝不会更新模型参数。
 
-新增的真实后验实验完全隔离在 `posterior_pruning/`：agent 先用完整
-observation 生成 next action，再用同一个冻结 Qwen vLLM 比较该动作在
-完整/候选 observation 下的 log likelihood，剪枝只影响后续 turn。它不走
-旧 `{query, code, threshold}` `/prune` 契约，也不与旧 IR/AST
-实现耦合。设计见 `docs/POSTERIOR_PRUNING_DESIGN.md`。
+真实 coding-agent 主实验隔离在 `zero_forward_pruning/`。它在工具输出
+进入 Qwen 之前，使用现有任务、工具命令、identifier、错误信号和代码
+结构生成可恢复的紧凑视图。该子系统不导入 vLLM 客户端，不调用大模型，
+每次剪枝的 model forward 和 LLM token 都严格为 0。完整设计见
+`docs/ZERO_FORWARD_PRUNING_DESIGN.md`。
 
 ## 实现与端到端实验组
 
@@ -45,47 +45,39 @@ python3 -m tf_pruning.cli evaluate \
 ```
 
 服务器环境安装完成、vLLM 已在 `8015` 端口提供
-`qwen3.5-27b`、mini-swe-agent 已安装后，可以直接启动真实 coding-agent
-实验：
+`Qwen3.5-27B`、mini-swe-agent 已安装后，真实 coding-agent 主实验只使用
+零额外模型调用入口：
 
 ```bash
 git pull --ff-only
-bash scripts/run_server_experiments.sh preflight
-bash scripts/run_server_experiments.sh smoke
+bash scripts/create_server_conda.sh
+cp configs/zero_forward_server_profile.example.env zero_forward_server_profile.env
+# 编辑 MINI_SWE_PYTHON；自定义 mini YAML 时再设置 MINI_SWE_BASE_CONFIG
+bash scripts/run_zero_forward_swebench.sh preflight
+bash scripts/run_zero_forward_swebench.sh smoke
 ```
 
-脚本会先移除当前终端继承的 uv/venv，再激活
-`swepruner-training-free` conda 环境；随后校验 vLLM、Docker 与
-mini-swe-agent 的 pruning hook。一题 smoke 比较 baseline 与 IR，且不会
-回退到 toy replay。smoke 和官方评分通过后，零参数运行会在相同
-SWE-Bench Verified 前 10 题上比较 baseline、IR、AST 和 IR+AST。查看
-状态、汇总和官方评分：
+环境创建脚本与启动器都会先移除当前终端继承的 uv/venv，再激活
+`swepruner-training-free` conda 环境。一题 smoke 在相同 SWE-Bench
+Verified 任务上比较 baseline 与 `adaptive_evidence`；它不回退到 toy
+replay，也不向 Qwen 发送任何额外的剪枝请求。查看状态、汇总和官方评分：
 
 ```bash
-bash scripts/run_server_experiments.sh status
-bash scripts/run_server_experiments.sh results
-bash scripts/run_server_experiments.sh grade
+bash scripts/run_zero_forward_swebench.sh status
+bash scripts/run_zero_forward_swebench.sh results
+bash scripts/run_zero_forward_swebench.sh grade
 ```
 
-真实实验的完整说明见 `docs/CODING_AGENT_EXPERIMENTS.md`。本地 vLLM
-model id 会从 `http://127.0.0.1:8015/v1/models` 自动发现；无需把 API
-key 写入仓库。
+smoke 通过后运行 `launch`，默认生成 baseline、safe rules、intent IR、
+intent structure、adaptive evidence 五组实验。只有 agent 的正常推理
+连接 `:8015`；四个 pruner 都是纯 CPU。model id 会从
+`http://127.0.0.1:8015/v1/models` 自动发现。服务器本地 agent 应只按
+`docs/ZERO_FORWARD_SERVER_HANDOFF.md` 的逐项交接与验收清单操作。
 
-服务器本地 agent 的逐项交接与验收清单见
-`docs/SERVER_AGENT_HANDOFF.md`。它明确区分本项目 conda、已有
-mini-swe-agent venv 和 grader 环境。
-
-运行 Qwen 动作后验的独立入口：
-
-```bash
-bash scripts/run_posterior_swebench.sh preflight
-bash scripts/run_posterior_swebench.sh smoke
-bash scripts/run_posterior_swebench.sh launch
-```
-
-默认 `launch` 同时生成 baseline、single verify、budget search、greedy
-blocks、block influence 五组真实 SWE-Bench 实验。服务器本地 agent
-应先读 `docs/POSTERIOR_SERVER_HANDOFF.md`。
+`scripts/run_server_experiments.sh` 和 `tasks/` 下的旧路线保留用于离线
+ablation/replay 复现，不是这次零 forward 在线主实验的入口。尤其是需要
+冻结模型多次 forward 的 oracle 类方法，不会被
+`run_zero_forward_swebench.sh` 启动。
 
 兼容官方 `POST /prune` 请求/响应字段的本地服务：
 
@@ -150,7 +142,7 @@ training_free_pruning/
 ├── agent_eval/                 # mini-swe-agent 配置适配、轨迹/评分汇总
 ├── evaluation/                 # replay 与代理指标
 ├── integrations/               # fail-open middleware 与官方 HTTP 兼容层
-├── posterior_pruning/          # 隔离的 post-action 后验协议、方法、服务与 mini adapter
+├── zero_forward_pruning/       # 隔离的零模型调用协议、方法、恢复服务与 mini adapter
 ├── configs/                    # 长度预算与 Pareto 预算
 ├── examples/                   # 请求和 replay 样例
 ├── scripts/                    # 本地/服务器/实验脚本

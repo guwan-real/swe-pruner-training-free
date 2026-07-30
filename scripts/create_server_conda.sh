@@ -21,6 +21,30 @@ command -v conda >/dev/null 2>&1 || {
   exit 2
 }
 CONDA_BASE="$(conda info --base)"
+
+# New server terminals may start inside a uv-managed virtual environment.
+# Resolve conda first, then remove that inherited environment before activation
+# so pip and python cannot leak across the two runtimes.
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+  ACTIVE_VENV="$VIRTUAL_ENV"
+  NEW_PATH=""
+  IFS=':' read -r -a PATH_PARTS <<<"${PATH:-}"
+  for PATH_PART in "${PATH_PARTS[@]}"; do
+    [[ "$PATH_PART" == "$ACTIVE_VENV/bin" ]] && continue
+    if [[ -z "$NEW_PATH" ]]; then
+      NEW_PATH="$PATH_PART"
+    else
+      NEW_PATH="$NEW_PATH:$PATH_PART"
+    fi
+  done
+  PATH="$NEW_PATH"
+  export PATH
+  unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT UV_ACTIVE UV_PROJECT_ENVIRONMENT
+  unset _OLD_VIRTUAL_PATH _OLD_VIRTUAL_PS1
+  hash -r
+  printf 'Disabled inherited uv/venv: %s\n' "$ACTIVE_VENV"
+fi
+
 # shellcheck source=/dev/null
 source "$CONDA_BASE/etc/profile.d/conda.sh"
 
@@ -34,8 +58,8 @@ conda activate "$ENV_NAME"
 python -m pip install --upgrade pip
 
 if [[ "$PROFILE" == "agent" ]]; then
-  # Online IR/AST/hybrid services are CPU-only. mini-swe-agent may stay in its
-  # existing separate venv and is selected with MINI_EXTRA_BIN.
+  # Zero-forward services are CPU-only. mini-swe-agent stays in its existing
+  # separate environment and is selected with MINI_SWE_PYTHON.
   python -m pip install -e "$REPO_ROOT[agent]"
 else
   # Only the second-stage PPL/hidden/attention/influence workflows need this
@@ -48,11 +72,13 @@ python - "$PROFILE" <<'PY'
 import sys
 
 import tf_pruning
+import zero_forward_pruning
 import yaml
 
 print("profile:", sys.argv[1])
 print("python:", sys.version.split()[0])
 print("tf_pruning:", tf_pruning.__file__)
+print("zero_forward_pruning:", zero_forward_pruning.__file__)
 print("PyYAML:", yaml.__version__)
 
 if sys.argv[1] == "model":
@@ -73,5 +99,5 @@ PY
 printf '\nEnvironment ready: %s (PROFILE=%s)\n' "$ENV_NAME" "$PROFILE"
 if [[ "$PROFILE" == "agent" ]]; then
   printf 'mini-swe-agent is not installed or modified by this script.\n'
-  printf 'Point the launcher at the existing pruning build with MINI_EXTRA_BIN.\n'
+  printf 'Point the launcher at the existing mini Python with MINI_SWE_PYTHON.\n'
 fi

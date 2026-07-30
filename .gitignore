@@ -17,4 +17,4 @@ models/
 *.pt
 *.pth
 server_profile.env
-posterior_server_profile.env
+zero_forward_server_profile.env
