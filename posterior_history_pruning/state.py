@@ -9,7 +9,7 @@ from posterior_history_pruning.protocol import (
     PosteriorHistoryConfig,
     PosteriorSignal,
 )
-from posterior_history_pruning.selection import compact_after_followup
+from posterior_history_pruning.selection import TOKEN_ESTIMATOR, compact_after_followup
 
 OUTPUT_OPEN = "<output>"
 OUTPUT_CLOSE = "</output>"
@@ -309,6 +309,11 @@ class PosteriorHistoryState:
             "original_line_count": result.original_line_count if result is not None else 0,
             "kept_line_count": result.kept_line_count if result is not None else 0,
             "output_kind": result.output_kind if result is not None else "unknown",
+            "token_estimator": TOKEN_ESTIMATOR,
+            "block_count": result.block_count if result is not None else 0,
+            "hard_block_count": result.hard_block_count if result is not None else 0,
+            "matched_block_count": result.matched_block_count if result is not None else 0,
+            "selected_block_count": result.selected_block_count if result is not None else 0,
             "boundary_mode": record.boundary_mode,
             "source_output_chars": record.source_output_chars,
             "visible_output_chars": len(record.selection_output),
@@ -337,6 +342,11 @@ class PosteriorHistoryState:
             "original_line_count": 0,
             "kept_line_count": 0,
             "output_kind": "unknown",
+            "token_estimator": TOKEN_ESTIMATOR,
+            "block_count": 0,
+            "hard_block_count": 0,
+            "matched_block_count": 0,
+            "selected_block_count": 0,
             "boundary_mode": "unrecognized",
             "source_output_chars": raw_output_chars,
             "visible_output_chars": 0,

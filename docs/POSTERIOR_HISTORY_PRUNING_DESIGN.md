@@ -51,7 +51,8 @@ DefaultAgent.query()
 - `context_focus_question`，如果原 agent 已经生成；
 - 有界的 assistant response 文本。
 
-它优先使用精确标识符；词项回退只使用在当前 observation 中低频的词，避免 `is`、`where` 等自然语言词命中所有代码块。保留规则包含：
+后验词项只使用在当前 observation 中能定位局部 block 的低频词，包括精确代码
+标识符；这避免 `is`、`where`、`config` 等常见词命中所有代码块。保留规则包含：
 
 - source：函数/类/import 骨架、精确符号所在块和一跳邻域；
 - traceback/test log：异常、frame、file:line、assertion 与邻域；
@@ -60,6 +61,18 @@ DefaultAgent.query()
 
 没有后验命中、保留率过高、收益不足、输出超过安全上限时，返回全文。
 
+成本门控使用 `max-lexical-ascii4-unicode1-v2` 本地代理：取词法/标点计数与
+ASCII 字符数除以 4（非 ASCII 字符按 1）两者的较大值。它修正“一个很长的代码
+标识符只算一个 token”的系统性低估，同时不加载 Qwen tokenizer、不请求 vLLM。
+这个数字仍是实验代理，最终 token 成本以 agent API usage 为准。
+
+后验匹配中的普通英文词和 identifier-shaped 词统一经过 block 频率门控，防止
+`config`、`value` 等高频词选中所有 block。每条记录还会保存
+`block_count / hard_block_count / matched_block_count / selected_block_count`；
+`no-safe-reduction-hard-skeleton` 表示结构或错误骨架本身已占满输出，
+`no-safe-reduction-posterior-expanded` 表示后验邻域扩展后占满输出；
+`no-safe-reduction-structural-neighborhood` 仅用于 safe 消融的结构邻域。
+
 ## 指标
 
 每条工具 observation 在 canonical trajectory 中带有 `posterior_history_stats`，但临时 prompt renderer 会剥离这个元数据，避免它进入 OpenAI/vLLM messages。结果汇总包括：
@@ -67,6 +80,9 @@ DefaultAgent.query()
 - `posterior_compacted_observations`：有多少旧 observation 获得压缩视图；
 - `history_prompt_compactions`：这些视图实际进入模型 prompt 的次数；
 - `estimated_history_tokens_saved`：按本地确定性 token 代理累计的节省；
+- `history_token_estimators`：本次轨迹使用的 token 代理版本；
+- `posterior_below_min_input_observations` 与
+  `posterior_no_safe_reduction_observations`：门控和不可缩减的直接计数；
 - agent prompt / total tokens、API calls、wall time、official resolve rate；
 - 相对 baseline 的差值。
 

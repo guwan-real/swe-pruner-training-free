@@ -5,6 +5,7 @@ import shlex
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
+from math import ceil
 from pathlib import PurePosixPath
 from typing import Iterable, Sequence
 
@@ -16,7 +17,6 @@ from posterior_history_pruning.protocol import (
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_./:-]*|\d+|[^\w\s]", re.UNICODE)
 WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.:/-]*|\d+")
-IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
 LOCATION_RE = re.compile(
     r"(?P<path>[A-Za-z0-9_./-]+\.(?:py|js|jsx|ts|tsx|go|rs|java|c|cc|cpp|h|hpp|rb|php|sh))"
     r"(?::(?P<line>\d+))?"
@@ -58,6 +58,7 @@ STOPWORDS = {
     "with",
     "your",
 }
+TOKEN_ESTIMATOR = "max-lexical-ascii4-unicode1-v2"
 
 
 class OutputKind(str, Enum):
@@ -78,7 +79,6 @@ class EvidenceBlock:
     text: str
     reasons: frozenset[str]
     terms: frozenset[str]
-    identifiers: frozenset[str]
 
     @property
     def line_numbers(self) -> tuple[int, ...]:
@@ -86,9 +86,19 @@ class EvidenceBlock:
 
 
 def estimate_tokens(text: str) -> int:
-    """Deterministic local token proxy; no tokenizer or model request occurs."""
+    """Deterministic token proxy suitable for a no-model cost gate.
 
-    return len(TOKEN_RE.findall(text))
+    The lexical count is useful for punctuation-heavy logs, but treats a long
+    identifier as one token. The character proxy corrects that systematic
+    code undercount while charging non-ASCII characters more conservatively.
+    This remains local CPU work: no tokenizer, model, or HTTP call occurs.
+    """
+
+    lexical_count = len(TOKEN_RE.findall(text))
+    ascii_count = sum(character.isascii() for character in text)
+    non_ascii_count = len(text) - ascii_count
+    character_count = ceil(ascii_count / 4) + non_ascii_count
+    return max(lexical_count, character_count)
 
 
 def _terms(text: str) -> frozenset[str]:
@@ -96,12 +106,6 @@ def _terms(text: str) -> frozenset[str]:
         token.lower()
         for token in WORD_RE.findall(text)
         if len(token) > 1 and token.lower() not in STOPWORDS and not token.isdigit()
-    )
-
-
-def _identifiers(text: str) -> frozenset[str]:
-    return frozenset(
-        token.lower() for token in IDENTIFIER_RE.findall(text) if token.lower() not in STOPWORDS
     )
 
 
@@ -228,7 +232,6 @@ def build_blocks(text: str, *, kind: OutputKind, max_lines: int) -> list[Evidenc
             text="\n".join(lines[start - 1 : end]),
             reasons=reasons,
             terms=_terms("\n".join(lines[start - 1 : end])),
-            identifiers=_identifiers("\n".join(lines[start - 1 : end])),
         )
         for index, (start, end, reasons) in enumerate(ranges)
     ]
@@ -288,6 +291,10 @@ def _unchanged(
     reason: str,
     method: str,
     kind: OutputKind,
+    block_count: int = 0,
+    hard_block_count: int = 0,
+    matched_block_count: int = 0,
+    selected_block_count: int = 0,
 ) -> CompactionResult:
     tokens = estimate_tokens(text)
     lines = text.splitlines()
@@ -302,6 +309,10 @@ def _unchanged(
         original_line_count=len(lines),
         kept_line_count=len(lines),
         retained_line_numbers=tuple(range(1, len(lines) + 1)),
+        block_count=block_count,
+        hard_block_count=hard_block_count,
+        matched_block_count=matched_block_count,
+        selected_block_count=selected_block_count,
     )
 
 
@@ -338,28 +349,31 @@ def compact_after_followup(
     hard = _hard_indices(blocks, kind)
     selected = set(hard)
     term_frequency: Counter[str] = Counter(term for block in blocks for term in block.terms)
-    # Generic language in a focus question ("where is", "validate", etc.)
-    # must not make every source block look relevant.  Lexical fallback is
-    # therefore limited to terms that discriminate a local region; exact code
-    # identifiers remain useful regardless of frequency.
+    # Generic language and common code names ("config", "value", "result")
+    # must not make every block look relevant. All posterior evidence,
+    # including identifier-shaped words, therefore passes the same local
+    # frequency gate. Rare exact symbols such as resolve_model still match.
     max_term_frequency = max(2, (len(blocks) + 9) // 10)
     posterior_terms = {
         term
         for term in _terms(posterior.text)
         if 0 < term_frequency.get(term, 0) <= max_term_frequency
     }
-    posterior_identifiers = _identifiers(posterior.text)
-    matches = {
-        block.index
-        for block in blocks
-        if posterior_identifiers.intersection(block.identifiers)
-        or posterior_terms.intersection(block.terms)
-    }
+    matches = {block.index for block in blocks if posterior_terms.intersection(block.terms)}
+    used_matches = matches if config.method == "adaptive" else set()
     if config.method == "adaptive":
         # Without an actual later-action match, preserving only a generic
         # skeleton is too risky.  Keep the complete historical observation.
         if not matches:
-            return _unchanged(text, reason="no-posterior-match", method=method, kind=kind)
+            return _unchanged(
+                text,
+                reason="no-posterior-match",
+                method=method,
+                kind=kind,
+                block_count=len(blocks),
+                hard_block_count=len(hard),
+                selected_block_count=len(hard),
+            )
         selected.update(matches)
         radius = (
             1
@@ -380,16 +394,58 @@ def compact_after_followup(
         line_no for block in blocks if block.index in selected for line_no in block.line_numbers
     }
     if not kept or len(kept) >= len(lines):
-        return _unchanged(text, reason="no-safe-reduction", method=method, kind=kind)
+        if len(hard) == len(blocks):
+            reason = "no-safe-reduction-hard-skeleton"
+        elif config.method == "adaptive":
+            reason = "no-safe-reduction-posterior-expanded"
+        else:
+            reason = "no-safe-reduction-structural-neighborhood"
+        return _unchanged(
+            text,
+            reason=reason,
+            method=method,
+            kind=kind,
+            block_count=len(blocks),
+            hard_block_count=len(hard),
+            matched_block_count=len(used_matches),
+            selected_block_count=len(selected),
+        )
     line_retention = len(kept) / len(lines)
     if line_retention > config.max_retention_ratio:
-        return _unchanged(text, reason="retention-above-cost-gate", method=method, kind=kind)
+        return _unchanged(
+            text,
+            reason="retention-above-cost-gate",
+            method=method,
+            kind=kind,
+            block_count=len(blocks),
+            hard_block_count=len(hard),
+            matched_block_count=len(used_matches),
+            selected_block_count=len(selected),
+        )
     compacted = _render(lines, kept, signal=posterior)
     if len(compacted) > config.max_output_chars:
-        return _unchanged(text, reason="output-cap-not-safe", method=method, kind=kind)
+        return _unchanged(
+            text,
+            reason="output-cap-not-safe",
+            method=method,
+            kind=kind,
+            block_count=len(blocks),
+            hard_block_count=len(hard),
+            matched_block_count=len(used_matches),
+            selected_block_count=len(selected),
+        )
     left_tokens = estimate_tokens(compacted)
     if original_tokens - left_tokens < config.min_savings_tokens:
-        return _unchanged(text, reason="insufficient-token-savings", method=method, kind=kind)
+        return _unchanged(
+            text,
+            reason="insufficient-token-savings",
+            method=method,
+            kind=kind,
+            block_count=len(blocks),
+            hard_block_count=len(hard),
+            matched_block_count=len(used_matches),
+            selected_block_count=len(selected),
+        )
     return CompactionResult(
         text=compacted,
         status="compacted",
@@ -401,4 +457,8 @@ def compact_after_followup(
         original_line_count=len(lines),
         kept_line_count=len(kept),
         retained_line_numbers=tuple(sorted(kept)),
+        block_count=len(blocks),
+        hard_block_count=len(hard),
+        matched_block_count=len(used_matches),
+        selected_block_count=len(selected),
     )

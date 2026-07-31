@@ -83,6 +83,10 @@ class CompactionResult:
     original_line_count: int
     kept_line_count: int
     retained_line_numbers: tuple[int, ...] = ()
+    block_count: int = 0
+    hard_block_count: int = 0
+    matched_block_count: int = 0
+    selected_block_count: int = 0
 
     @property
     def retention_ratio(self) -> float:

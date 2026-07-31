@@ -52,4 +52,11 @@ posterior_adaptive
 `history_observations_untracked>0` 时先检查 trajectory 中的模板格式，不要通过
 降低阈值掩盖边界问题。
 
+本版本的 `history_token_estimators` 应为
+`max-lexical-ascii4-unicode1-v2`。若仍然没有压缩，先比较
+`posterior_below_min_input_observations` 和
+`posterior_no_safe_reduction_observations`，再查看对应 message 的
+`hard_block_count / matched_block_count / selected_block_count`。不要先把
+`POSTERIOR_MIN_INPUT_TOKENS` 从 1500 一步降到 500。
+
 然后才比较 5 题和 20 题：主接受标准是 API calls 不增加、prompt tokens 降低，并维持官方 resolve rate。若 agent calls 上升，先用同一轨迹中的 `posterior_history_stats` 定位是哪一个冷历史 observation 造成重读，不要先降低保留阈值。

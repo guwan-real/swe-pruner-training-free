@@ -86,6 +86,7 @@ def summarize_arm(path: Path) -> dict[str, Any]:
     origin_tokens = retained_tokens = 0
     statuses: Counter[str] = Counter()
     reasons: Counter[str] = Counter()
+    token_estimators: set[str] = set()
     exit_statuses: Counter[str] = Counter()
     reports: list[dict[str, Any]] = []
     for trajectory in trajectories:
@@ -115,6 +116,9 @@ def summarize_arm(path: Path) -> dict[str, Any]:
                 reason = str(stats.get("reason", "unknown"))
                 statuses[status] += 1
                 reasons[reason] += 1
+                estimator = stats.get("token_estimator")
+                if isinstance(estimator, str) and estimator:
+                    token_estimators.add(estimator)
                 if status == "untracked":
                     untracked += 1
                     continue
@@ -147,8 +151,13 @@ def summarize_arm(path: Path) -> dict[str, Any]:
         "history_observations_untracked": untracked,
         "posterior_eligible_observations": eligible,
         "posterior_compacted_observations": compacted,
+        "posterior_below_min_input_observations": reasons.get("below-min-input-tokens", 0),
+        "posterior_no_safe_reduction_observations": sum(
+            count for reason, count in reasons.items() if reason.startswith("no-safe-reduction")
+        ),
         "history_prompt_compactions": prompt_compactions,
         "estimated_history_tokens_saved": saved_tokens,
+        "history_token_estimators": ",".join(sorted(token_estimators)),
         "history_observation_retention_ratio": (
             retained_tokens / origin_tokens if origin_tokens else None
         ),
@@ -226,8 +235,11 @@ FIELDS = [
     "history_observations_untracked",
     "posterior_eligible_observations",
     "posterior_compacted_observations",
+    "posterior_below_min_input_observations",
+    "posterior_no_safe_reduction_observations",
     "history_prompt_compactions",
     "estimated_history_tokens_saved",
+    "history_token_estimators",
     "history_observation_retention_ratio",
     "pruner_model_forwards",
     "pruner_llm_tokens",

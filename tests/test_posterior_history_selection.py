@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from math import ceil
+
 from posterior_history_pruning.protocol import PosteriorHistoryConfig, PosteriorSignal
-from posterior_history_pruning.selection import compact_after_followup
+from posterior_history_pruning.selection import (
+    TOKEN_ESTIMATOR,
+    compact_after_followup,
+    estimate_tokens,
+)
 from posterior_history_pruning.state import (
     PosteriorHistoryState,
     locate_observation_boundary,
@@ -54,6 +60,50 @@ def test_posterior_selector_keeps_followup_symbol_and_compacts_old_source() -> N
     assert result.left_token_cnt < result.origin_token_cnt
     assert result.retention_ratio < 0.99
     assert "posterior_history_compaction" in result.text
+
+
+def test_token_proxy_corrects_lexical_undercount_for_long_code_tokens() -> None:
+    text = "\n".join(f"very_long_generated_identifier_{index:04d}" for index in range(300))
+
+    assert estimate_tokens(text) >= ceil(len(text) / 4)
+    assert estimate_tokens(text) > 1500
+
+
+def test_common_response_words_do_not_expand_posterior_match_to_every_block() -> None:
+    source = _source()
+    result = compact_after_followup(
+        source,
+        causing_command="sed -n '1,999p' model.py",
+        causing_path="model.py",
+        posterior=PosteriorSignal(
+            command="rg -n helper_5 model.py",
+            context_focus_question="Inspect helper_5.",
+            response_content=(
+                "I will inspect the config value and result in the helper function before editing."
+            ),
+        ),
+        config=_config(),
+    )
+
+    assert result.status == "compacted"
+    assert result.matched_block_count > 0
+    assert result.matched_block_count < result.block_count
+    assert result.selected_block_count < result.block_count
+
+
+def test_no_safe_reduction_reports_whether_hard_skeleton_consumed_every_block() -> None:
+    source = "\n".join(f"def helper_{index}(): pass" for index in range(300))
+    result = compact_after_followup(
+        source,
+        causing_command="cat dense.py",
+        causing_path="dense.py",
+        posterior=PosteriorSignal(command="true"),
+        config=_config(method="safe"),
+    )
+
+    assert result.status == "skipped"
+    assert result.reason == "no-safe-reduction-hard-skeleton"
+    assert result.hard_block_count == result.block_count
 
 
 def test_selector_fails_open_without_an_actual_posterior_match() -> None:
@@ -124,6 +174,7 @@ def test_state_keeps_hot_observation_full_and_never_mutates_canonical_content() 
     assert "posterior_history_stats" not in cold_view[1]
     assert first["posterior_history_stats"]["prompt_compaction_count"] == 1
     assert first["posterior_history_stats"]["total_prompt_tokens_saved"] > 0
+    assert first["posterior_history_stats"]["token_estimator"] == TOKEN_ESTIMATOR
 
 
 def test_rendered_prompt_is_fully_detached_from_canonical_message_metadata() -> None:

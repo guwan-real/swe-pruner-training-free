@@ -59,6 +59,7 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
         history_stats={
             "status": "compacted",
             "reason": "posterior-action-guided",
+            "token_estimator": "max-lexical-ascii4-unicode1-v2",
             "posterior_command": "rg -n resolve_model model.py",
             "origin_token_cnt": 1000,
             "left_token_cnt": 300,
@@ -74,8 +75,11 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
     assert adaptive["history_observations_untracked"] == 0
     assert adaptive["posterior_eligible_observations"] == 1
     assert adaptive["posterior_compacted_observations"] == 1
+    assert adaptive["posterior_below_min_input_observations"] == 0
+    assert adaptive["posterior_no_safe_reduction_observations"] == 0
     assert adaptive["history_prompt_compactions"] == 3
     assert adaptive["estimated_history_tokens_saved"] == 2100
+    assert adaptive["history_token_estimators"] == "max-lexical-ascii4-unicode1-v2"
     assert adaptive["history_observation_retention_ratio"] == 0.3
     assert adaptive["agent_prompt_tokens_delta_vs_baseline"] == -200
     assert adaptive["agent_prompt_token_ratio_vs_baseline"] == 0.8

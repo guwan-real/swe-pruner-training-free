@@ -87,6 +87,56 @@ class OfficialForkShape:
         return "Submitted", "done"
 
 
+def _fresh_official_fork_shape() -> type:
+    """Return an unpatched class so baseline and hook can be compared exactly."""
+
+    class FreshOfficialForkShape:
+        def __init__(self) -> None:
+            self.model = FakeModel()
+            self.messages: list[dict[str, Any]] = [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "task"},
+            ]
+            self.raw = _source()
+
+        def add_message(self, role, content, **kwargs):
+            self.messages.append({"role": role, "content": content, **kwargs})
+
+        def parse_action(self, response):
+            match = re.search(r"```bash\n(.*?)\n```", response["content"], re.DOTALL)
+            if not match:
+                raise ValueError("missing action")
+            focus = re.search(
+                r"<context_focus_question>(.*?)</context_focus_question>",
+                response["content"],
+                re.DOTALL,
+            )
+            return {
+                "action": match.group(1),
+                "context_focus_question": focus.group(1) if focus else None,
+            }
+
+        def query(self):
+            response = self.model.query(self.messages)
+            self.parse_action(response)
+            self.add_message("assistant", **response)
+            return response
+
+        def execute_action(self, action):
+            return {"output": self.raw, "returncode": 0}
+
+        def get_observation(self, response):
+            output = self.execute_action(self.parse_action(response))
+            self.add_message("user", f"Observation: {output['output']}")
+            return output
+
+        def run(self, task, **kwargs):
+            del task, kwargs
+            return "Submitted", "done"
+
+    return FreshOfficialForkShape
+
+
 def _config() -> PosteriorHistoryConfig:
     return PosteriorHistoryConfig(
         hot_observations=1,
@@ -153,6 +203,37 @@ def test_signature_guard_refuses_changed_query_boundary() -> None:
 
     with pytest.raises(RuntimeError, match="query signature changed"):
         assert_mini_compatible(WrongQuery)
+
+
+def test_all_fail_open_hook_sends_the_exact_same_prompts_as_baseline() -> None:
+    baseline_class = _fresh_official_fork_shape()
+    posterior_class = _fresh_official_fork_shape()
+    _patch(
+        posterior_class,
+        PosteriorHistoryConfig(
+            hot_observations=1,
+            min_input_tokens=10**9,
+            min_savings_tokens=1,
+            max_retention_ratio=0.99,
+            block_max_lines=8,
+            max_output_chars=50000,
+        ),
+    )
+    baseline = baseline_class()
+    posterior = posterior_class()
+
+    for _ in range(3):
+        baseline_response = baseline.query()
+        baseline.get_observation(baseline_response)
+        posterior_response = posterior.query()
+        posterior.get_observation(posterior_response)
+
+    assert posterior.model.snapshots == baseline.model.snapshots
+    assert all(
+        "posterior_history_compaction" not in message["content"]
+        for prompt in posterior.model.snapshots
+        for message in prompt
+    )
 
 
 def test_config_adapter_keeps_prompt_identical_while_removing_legacy_pruner() -> None:
