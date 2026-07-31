@@ -25,15 +25,19 @@ server launcher.
 
 ## 2. Timing
 
-The mini-swe-agent adapter wraps `DefaultAgent.execute_actions(message)`:
+The primary adapter wraps the official SWE-Pruner eval fork's
+`DefaultAgent.execute_action(action)`. Standard mini's
+`DefaultAgent.execute_actions(message)` is retained as a secondary capability
+path:
 
 ```text
 normal agent inference
   -> generated bash/tool action
   -> environment.execute(action)
   -> raw output
+  -> original submission/timeout checks
   -> zero-forward CPU pruner
-  -> model.format_observation_messages(...)
+  -> existing observation formatter
   -> compact observation enters Qwen
 ```
 
@@ -43,6 +47,13 @@ form also becomes the stable history for later turns.
 The intent signal is free: task text, the already generated command,
 `context_focus_question` when present, paths, identifiers and recent messages.
 No goal-hint generation request is added.
+
+For the official fork, the generated shared config removes the non-empty
+legacy `agent.pruner` section but does not use `--disable-pruner`. The runner
+therefore creates a false empty pruner config without constructing
+`PrunerClient`, while retaining the prompts that produce
+`context_focus_question`. A runtime guard rejects any non-null legacy client
+before executing the action.
 
 ## 3. Evidence pipeline
 

@@ -74,8 +74,9 @@ bash scripts/run_zero_forward_swebench.sh launch
 ```
 
 环境创建脚本和启动器会先关闭继承的 uv/venv，再激活项目 conda。该入口
-在 `DefaultAgent.execute_actions()` 中拦截原始工具输出，在 observation
-入模之前压缩；pruner forward/token 固定为 0，原文通过随机 ID 可恢复。
+优先适配 SWE-Pruner 官方 eval fork 的 `DefaultAgent.execute_action()`，
+同时兼容标准版的 `execute_actions()`；两者都在 observation 入模之前
+压缩。pruner forward/token 固定为 0，原文通过随机 ID 可恢复。
 `smoke` 比较同一题的 baseline 与推荐方法，`launch` 运行五组真实
 SWE-Bench 实验。时序、实验组与服务器配置见
 `docs/ZERO_FORWARD_PRUNING_DESIGN.md` 和

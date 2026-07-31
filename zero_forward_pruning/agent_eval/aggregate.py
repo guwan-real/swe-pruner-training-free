@@ -29,6 +29,10 @@ def _pruning_stats(message: dict[str, Any]) -> dict[str, Any] | None:
     direct = message.get("zero_forward_pruning")
     if isinstance(direct, dict):
         return direct
+    fork_stats = message.get("pruned_stats")
+    if isinstance(fork_stats, dict):
+        nested = fork_stats.get("zero_forward_pruning")
+        return nested if isinstance(nested, dict) else fork_stats
     extra = message.get("extra")
     if isinstance(extra, dict):
         nested = extra.get("zero_forward_pruning")
@@ -40,6 +44,13 @@ def _pruning_stats(message: dict[str, Any]) -> dict[str, Any] | None:
 def _is_recovery_action(message: dict[str, Any]) -> bool:
     if message.get("role") != "assistant":
         return False
+    content = message.get("content")
+    if (
+        isinstance(content, str)
+        and "/raw/" in content
+        and ("curl" in content or "wget" in content)
+    ):
+        return True
     extra = message.get("extra")
     actions = extra.get("actions", []) if isinstance(extra, dict) else []
     if not isinstance(actions, list):
@@ -47,7 +58,7 @@ def _is_recovery_action(message: dict[str, Any]) -> bool:
     for action in actions:
         if not isinstance(action, dict):
             continue
-        command = action.get("command", "")
+        command = action.get("command", action.get("action", ""))
         if (
             isinstance(command, str)
             and "/raw/" in command

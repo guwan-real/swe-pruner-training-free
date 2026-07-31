@@ -12,6 +12,11 @@ Hard runtime invariants:
 - `llm_token_count == 0`;
 - fail-open when parsing, recovery storage, or cost gates fail.
 
+The primary agent integration target is SWE-Pruner's official
+`downstream_eval/multi_turn/swebench/mini-swe-agent--with-pruning` fork. Its
+single-action hook is detected from method signatures, not the unreliable
+package version. Standard mini's batch action API remains supported.
+
 ## Methods
 
 - `methods/safe_rules`: hard errors, trace frames, source locations and source

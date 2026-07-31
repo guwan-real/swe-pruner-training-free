@@ -37,7 +37,14 @@ Edit the untracked profile:
 MINI_SWE_PYTHON=/absolute/path/to/existing/mini-swe-agent-venv/bin/python
 ```
 
-The Python may belong to standard mini-swe-agent or the SWE-Pruner fork. The
+The primary target is the Python environment for the official SWE-Pruner eval
+fork at:
+
+```text
+downstream_eval/multi_turn/swebench/mini-swe-agent--with-pruning
+```
+
+Standard mini-swe-agent remains a secondary compatibility path. The
 environment-creation script and launcher both remove an inherited uv/venv
 before activating the project conda. The launcher remembers and invokes this
 exact mini Python for agent runs.
@@ -55,7 +62,8 @@ bash scripts/run_zero_forward_swebench.sh preflight
 It verifies:
 
 1. project package import;
-2. exact mini `execute_actions(self, message)` hook contract;
+2. official fork `execute_action(self, action)`/`add_message` contract, or the
+   secondary standard batch contract;
 3. a supported mini SWE-Bench runner;
 4. Docker daemon and disk space;
 5. Qwen model discovery from `8015/v1/models`;
@@ -65,6 +73,19 @@ It verifies:
 9. byte-for-byte raw recovery.
 
 It does not send a pruning request to Qwen.
+
+For the official fork, successful output includes:
+
+```text
+"mini_mode": "swe-pruner-single-v1"
+"legacy_pruner_strategy": "empty-config-preserve-context-focus-question"
+```
+
+The zero-forward launcher intentionally does not pass `--disable-pruner`.
+The generated shared YAML removes `agent.pruner`; the fork runner recreates
+only an empty dictionary, which does not construct `PrunerClient`. This keeps
+the existing `context_focus_question` prompt for both baseline and pruning
+arms. Do not manually add `--pruner-url` or `--disable-pruner`.
 
 ## One-task smoke
 

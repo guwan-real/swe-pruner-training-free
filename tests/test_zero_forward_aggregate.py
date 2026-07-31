@@ -59,3 +59,43 @@ def test_aggregate_reports_zero_cost_and_recovery(tmp_path: Path) -> None:
     assert summary["pruner_llm_tokens"] == 0
     assert summary["observation_retention_ratio"] == 0.4
     assert summary["recovery_actions"] == 1
+
+
+def test_aggregate_reads_official_swe_pruner_fork_trajectory_shape(tmp_path: Path) -> None:
+    arm = tmp_path / "adaptive_evidence"
+    trajectory_dir = arm / "instance"
+    trajectory_dir.mkdir(parents=True)
+    payload = {
+        "info": {"exit_status": "Submitted"},
+        "messages": [
+            {
+                "role": "assistant",
+                "content": (
+                    "```bash\ncurl -fsS "
+                    "http://host.docker.internal:8124/raw/random-identifier\n```"
+                ),
+            },
+            {
+                "role": "user",
+                "content": "Observation: compact",
+                "pruned_stats": {
+                    "status": "pruned",
+                    "origin_token_cnt": 800,
+                    "left_token_cnt": 200,
+                    "latency_ms": 3.0,
+                    "model_input_token_cnt": 0,
+                    "model_forward_count": 0,
+                    "llm_token_count": 0,
+                },
+            },
+        ],
+    }
+    (trajectory_dir / "instance.traj.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = summarize_arm(arm)
+
+    assert summary["pruning_calls"] == 1
+    assert summary["pruned"] == 1
+    assert summary["observation_retention_ratio"] == 0.25
+    assert summary["pruner_model_forwards"] == 0
+    assert summary["recovery_actions"] == 1

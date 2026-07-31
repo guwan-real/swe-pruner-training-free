@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from functools import wraps
 from pathlib import PurePosixPath
 from typing import Any, Mapping
 
@@ -12,23 +13,86 @@ from zero_forward_pruning.mini_adapter.client import (
 from zero_forward_pruning.text import estimate_tokens, extract_paths, shell_verb
 
 LOGGER = logging.getLogger("zero_forward_pruning.mini_adapter")
+UPSTREAM_BATCH_MODE = "upstream-batch-v2"
+SWE_PRUNER_SINGLE_MODE = "swe-pruner-single-v1"
 _INSTALLED = False
-_ORIGINAL_EXECUTE_ACTIONS: Any = None
 
 
-def assert_mini_compatible(default_agent_class: type) -> None:
+def assert_mini_compatible(default_agent_class: type) -> str:
+    """Return the supported runtime shape instead of trusting a package version."""
+
     execute_actions = getattr(default_agent_class, "execute_actions", None)
     add_messages = getattr(default_agent_class, "add_messages", None)
-    if not callable(execute_actions) or not callable(add_messages):
+    execute_action = getattr(default_agent_class, "execute_action", None)
+    add_message = getattr(default_agent_class, "add_message", None)
+    has_batch_api = callable(execute_actions) and callable(add_messages)
+    has_single_api = callable(execute_action) and callable(add_message)
+    if has_batch_api and has_single_api:
         raise RuntimeError(
-            "mini-swe-agent DefaultAgent must expose execute_actions() and add_messages()"
+            "mini-swe-agent DefaultAgent exposes both supported action APIs; "
+            "refusing an ambiguous hook target"
         )
-    signature = inspect.signature(execute_actions)
-    if tuple(signature.parameters) != ("self", "message"):
+    if has_batch_api:
+        signature = inspect.signature(execute_actions)
+        if tuple(signature.parameters) != ("self", "message"):
+            raise RuntimeError(
+                "mini-swe-agent DefaultAgent.execute_actions signature changed; "
+                "expected execute_actions(self, message)"
+            )
+        add_signature = inspect.signature(add_messages)
+        add_parameters = tuple(add_signature.parameters.values())
+        if (
+            len(add_parameters) != 2
+            or add_parameters[0].name != "self"
+            or add_parameters[1].name != "messages"
+            or add_parameters[1].kind is not inspect.Parameter.VAR_POSITIONAL
+        ):
+            raise RuntimeError(
+                "mini-swe-agent DefaultAgent.add_messages signature changed; "
+                "expected add_messages(self, *messages)"
+            )
+        return UPSTREAM_BATCH_MODE
+    if has_single_api:
+        signature = inspect.signature(execute_action)
+        if tuple(signature.parameters) != ("self", "action"):
+            raise RuntimeError(
+                "SWE-Pruner mini fork DefaultAgent.execute_action signature changed; "
+                "expected execute_action(self, action)"
+            )
+        add_signature = inspect.signature(add_message)
+        add_parameters = tuple(add_signature.parameters.values())
+        if (
+            len(add_parameters) != 4
+            or tuple(parameter.name for parameter in add_parameters[:3])
+            != ("self", "role", "content")
+            or add_parameters[3].kind is not inspect.Parameter.VAR_KEYWORD
+        ):
+            raise RuntimeError(
+                "SWE-Pruner mini fork DefaultAgent.add_message signature changed; "
+                "expected add_message(self, role, content, **kwargs)"
+            )
+        return SWE_PRUNER_SINGLE_MODE
+    available = sorted(
+        name
+        for name in ("execute_actions", "add_messages", "execute_action", "add_message")
+        if callable(getattr(default_agent_class, name, None))
+    )
+    raise RuntimeError(
+        "unsupported mini-swe-agent DefaultAgent action API; expected "
+        "execute_actions(self, message) + add_messages() or the official SWE-Pruner "
+        "eval fork's execute_action(self, action) + add_message(); "
+        f"found callable methods: {available}"
+    )
+
+
+def detect_installed_mini_mode() -> str:
+    try:
+        from minisweagent.agents.default import DefaultAgent
+    except ImportError as exc:
         raise RuntimeError(
-            "mini-swe-agent DefaultAgent.execute_actions signature changed; "
-            "expected execute_actions(self, message)"
-        )
+            "minisweagent is not importable; use its existing Python environment"
+        ) from exc
+    return assert_mini_compatible(DefaultAgent)
 
 
 def _stats(result: Mapping[str, Any]) -> dict[str, Any]:
@@ -69,6 +133,15 @@ def _query_from_action(action: Mapping[str, Any], task: str) -> str:
     return "\n".join(part for part in parts if part)
 
 
+def _normalize_action(action: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = dict(action)
+    command = normalized.get("command")
+    if not isinstance(command, str):
+        fork_action = normalized.get("action")
+        normalized["command"] = fork_action if isinstance(fork_action, str) else ""
+    return normalized
+
+
 def _recent_context(agent: Any) -> str:
     messages = getattr(agent, "messages", [])
     if not isinstance(messages, list):
@@ -83,6 +156,39 @@ def _recent_context(agent: Any) -> str:
     return "\n".join(values)[-2500:]
 
 
+def _agent_call_count(agent: Any) -> int:
+    candidates = (
+        getattr(agent, "n_calls", None),
+        getattr(getattr(agent, "model", None), "n_calls", None),
+    )
+    for value in candidates:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return 0
+
+
+def _zero_forward_stats(output: Mapping[str, Any]) -> dict[str, Any] | None:
+    extra = output.get("extra")
+    if not isinstance(extra, Mapping):
+        return None
+    stats = extra.get("zero_forward_pruning")
+    return dict(stats) if isinstance(stats, Mapping) else None
+
+
+def _copy_extra(output: Mapping[str, Any]) -> dict[str, Any]:
+    extra = output.get("extra")
+    return dict(extra) if isinstance(extra, Mapping) else {}
+
+
+def _publish_swe_pruner_stats(output: dict[str, Any]) -> dict[str, Any]:
+    """Expose stats where the official SWE-Pruner fork stores trajectory metadata."""
+
+    stats = _zero_forward_stats(output)
+    if stats is not None:
+        output["pruned_stats"] = stats
+    return output
+
+
 def apply_to_output(
     agent: Any,
     *,
@@ -91,6 +197,7 @@ def apply_to_output(
     client: ZeroForwardClient,
     action_index: int,
 ) -> dict[str, Any]:
+    action = _normalize_action(action)
     result_output = dict(output)
     code = output.get("output", "")
     if not isinstance(code, str):
@@ -100,7 +207,7 @@ def apply_to_output(
     if "/raw/" in command and shell_verb(command) in {"curl", "wget"}:
         tokens = estimate_tokens(code)
         line_count = len(code.splitlines())
-        extra = dict(result_output.get("extra", {}))
+        extra = _copy_extra(result_output)
         extra["zero_forward_pruning"] = {
             "method": "recovery_bypass",
             "status": "skipped",
@@ -120,7 +227,7 @@ def apply_to_output(
     task = extra_vars.get("task", "") if isinstance(extra_vars, Mapping) else ""
     task = task if isinstance(task, str) else ""
     instance_id = getattr(agent, "instance_id", "") or "unknown"
-    call_count = getattr(agent, "n_calls", 0)
+    call_count = _agent_call_count(agent)
     paths = extract_paths(command)
     try:
         result = client.prune(
@@ -132,17 +239,17 @@ def apply_to_output(
             recent_context=_recent_context(agent),
             request_id=f"{instance_id}:call-{call_count}:action-{action_index}",
             metadata={
-                "adapter": "mini-swe-agent-tool-boundary-v1",
+                "adapter": "mini-swe-agent-tool-boundary-v2",
                 "returncode": output.get("returncode"),
             },
         )
         result_output["output"] = result["pruned_code"]
-        extra = dict(result_output.get("extra", {}))
+        extra = _copy_extra(result_output)
         extra["zero_forward_pruning"] = _stats(result)
         result_output["extra"] = extra
     except Exception as exc:
         LOGGER.warning("zero-forward pruning failed open: %s", exc)
-        extra = dict(result_output.get("extra", {}))
+        extra = _copy_extra(result_output)
         extra["zero_forward_pruning"] = {
             "method": "client",
             "status": "client_error",
@@ -155,31 +262,20 @@ def apply_to_output(
     return result_output
 
 
-def install_hook(config: ZeroForwardClientConfig | None = None) -> bool:
-    """Patch only the tool-output boundary of the current mini process."""
-
-    global _INSTALLED, _ORIGINAL_EXECUTE_ACTIONS
-    if _INSTALLED:
-        return True
-    config = config if config is not None else ZeroForwardClientConfig.from_env()
-    if config is None:
-        return False
-    try:
-        from minisweagent.agents.default import DefaultAgent
-    except ImportError as exc:
+def _reject_active_legacy_pruner(agent: Any) -> None:
+    if getattr(agent, "pruner_client", None) is not None:
         raise RuntimeError(
-            "minisweagent is not importable; use its existing Python environment"
-        ) from exc
-    assert_mini_compatible(DefaultAgent)
-    client = ZeroForwardClient(config)
-    original_execute_actions = DefaultAgent.execute_actions
+            "legacy SWE-Pruner PrunerClient is active together with the zero-forward "
+            "adapter; remove agent.pruner from the generated config"
+        )
 
+
+def _patch_upstream_batch(default_agent_class: type, client: ZeroForwardClient) -> None:
+    original_execute_actions = default_agent_class.execute_actions
+
+    @wraps(original_execute_actions)
     def execute_actions_with_zero_forward(self: Any, message: dict[str, Any]) -> list[dict]:
-        if getattr(self, "pruner_client", None) is not None:
-            raise RuntimeError(
-                "legacy mini-swe-agent pruner is active together with zero-forward "
-                "adapter; remove agent.pruner or use --disable-pruner"
-            )
+        _reject_active_legacy_pruner(self)
         actions = message.get("extra", {}).get("actions", [])
         outputs = []
         for index, action in enumerate(actions):
@@ -200,11 +296,60 @@ def install_hook(config: ZeroForwardClientConfig | None = None) -> bool:
         )
         return self.add_messages(*observations)
 
-    _ORIGINAL_EXECUTE_ACTIONS = original_execute_actions
-    DefaultAgent.execute_actions = execute_actions_with_zero_forward
+    default_agent_class.execute_actions = execute_actions_with_zero_forward
+
+
+def _patch_swe_pruner_single(default_agent_class: type, client: ZeroForwardClient) -> None:
+    """Wrap the official eval fork without copying its execution/termination flow."""
+
+    original_execute_action = default_agent_class.execute_action
+
+    @wraps(original_execute_action)
+    def execute_action_with_zero_forward(
+        self: Any,
+        action: dict[str, Any],
+    ) -> dict[str, Any]:
+        # Check before the original call: its final step invokes _apply_pruner.
+        _reject_active_legacy_pruner(self)
+        raw_output = original_execute_action(self, action)
+        compacted = apply_to_output(
+            self,
+            action=action,
+            output=raw_output,
+            client=client,
+            action_index=0,
+        )
+        return _publish_swe_pruner_stats(compacted)
+
+    default_agent_class.execute_action = execute_action_with_zero_forward
+
+
+def install_hook(config: ZeroForwardClientConfig | None = None) -> bool:
+    """Patch only the tool-output boundary of the current mini process."""
+
+    global _INSTALLED
+    if _INSTALLED:
+        return True
+    config = config if config is not None else ZeroForwardClientConfig.from_env()
+    if config is None:
+        return False
+    try:
+        from minisweagent.agents.default import DefaultAgent
+    except ImportError as exc:
+        raise RuntimeError(
+            "minisweagent is not importable; use its existing Python environment"
+        ) from exc
+
+    mode = assert_mini_compatible(DefaultAgent)
+    client = ZeroForwardClient(config)
+    if mode == SWE_PRUNER_SINGLE_MODE:
+        _patch_swe_pruner_single(DefaultAgent, client)
+    else:
+        _patch_upstream_batch(DefaultAgent, client)
     _INSTALLED = True
     LOGGER.info(
-        "installed zero-forward mini-swe-agent tool-boundary hook: %s",
+        "installed zero-forward mini-swe-agent hook mode=%s endpoint=%s",
+        mode,
         config.endpoint,
     )
     return True
