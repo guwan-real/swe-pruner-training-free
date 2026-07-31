@@ -22,3 +22,12 @@ def test_posterior_launcher_keeps_baseline_and_posterior_arms_in_one_shared_conf
     assert "start_arm baseline adaptive" in source
     assert 'start_arm "posterior_$method" "$method"' in source
     assert 'POSTERIOR_HISTORY_ALLOW_BASELINE="$allow_baseline"' in source
+
+
+def test_posterior_launcher_is_safe_under_errexit_and_nounset() -> None:
+    source = (ROOT / "scripts" / "run_posterior_history_swebench.sh").read_text(encoding="utf-8")
+
+    assert 'if [[ -z "$active_venv" ]]; then return 0; fi' in source
+    assert '[[ -n "$active_venv" ]] || return' not in source
+    assert 'local arm="$1" method="$2"\n  local arm_dir="$RUN_ROOT/arms/$arm"' in source
+    assert 'method="$2" arm_dir="$RUN_ROOT/arms/$arm"' not in source

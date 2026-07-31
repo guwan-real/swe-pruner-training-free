@@ -82,7 +82,7 @@ remove_path_entry() {
 
 disable_uv_or_venv() {
   local active_venv="${VIRTUAL_ENV:-}"
-  [[ -n "$active_venv" ]] || return
+  if [[ -z "$active_venv" ]]; then return 0; fi
   remove_path_entry "$active_venv/bin"
   unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT UV_ACTIVE UV_PROJECT_ENVIRONMENT _OLD_VIRTUAL_PATH _OLD_VIRTUAL_PS1
   hash -r
@@ -226,7 +226,8 @@ generate_shared_config() {
 }
 
 start_arm() {
-  local arm="$1" method="$2" arm_dir="$RUN_ROOT/arms/$arm"
+  local arm="$1" method="$2"
+  local arm_dir="$RUN_ROOT/arms/$arm"
   local enabled=1 allow_baseline=0
   if [[ "$arm" == "baseline" ]]; then enabled=0; allow_baseline=1; fi
   local -a args=(
