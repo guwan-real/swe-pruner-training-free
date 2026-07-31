@@ -26,6 +26,12 @@ tool output O_t
 
 因此，剪枝不会影响模型第一次基于 `O_t` 决定下一步做什么。完整消息仍留在 agent 内存和 trajectory 中，便于审计；发送 vLLM 的 copied prompt 才包含压缩版本。
 
+mini-swe-agent 对达到 10000 字符的命令输出不会把原文直接放进消息，而是渲染
+`<output_head>` 前 5000 字符与 `<output_tail>` 后 5000 字符。边界解析器会先尝试
+完整原文匹配；失败后只在头尾标签、顺序和两段原文锚点都一致时，改为追踪模型
+实际见过的头尾内容。标签或锚点不符合时仍 fail-open，并以 `untracked` 指标显式
+记录，不再静默漏掉长输出。
+
 官方 SWE-Pruner fork 的实际边界是：
 
 ```text

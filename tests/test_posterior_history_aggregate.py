@@ -43,6 +43,16 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
     _write_arm(tmp_path, "baseline", prompt_tokens=1000, total_tokens=1100, history_stats=None)
     _write_arm(
         tmp_path,
+        "posterior_untracked",
+        prompt_tokens=1000,
+        total_tokens=1100,
+        history_stats={
+            "status": "untracked",
+            "reason": "rendered-output-boundary-not-found",
+        },
+    )
+    _write_arm(
+        tmp_path,
         "posterior_adaptive",
         prompt_tokens=800,
         total_tokens=900,
@@ -59,6 +69,9 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
 
     rows = {row["arm"]: row for row in summarize_run(tmp_path)}
     adaptive = rows["posterior_adaptive"]
+    assert adaptive["history_observations_seen"] == 1
+    assert adaptive["history_observations_tracked"] == 1
+    assert adaptive["history_observations_untracked"] == 0
     assert adaptive["posterior_eligible_observations"] == 1
     assert adaptive["posterior_compacted_observations"] == 1
     assert adaptive["history_prompt_compactions"] == 3
@@ -68,3 +81,7 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
     assert adaptive["agent_prompt_token_ratio_vs_baseline"] == 0.8
     assert adaptive["pruner_model_forwards"] == 0
     assert adaptive["pruner_llm_tokens"] == 0
+    untracked = rows["posterior_untracked"]
+    assert untracked["history_observations_seen"] == 1
+    assert untracked["history_observations_tracked"] == 0
+    assert untracked["history_observations_untracked"] == 1

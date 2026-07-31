@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from posterior_history_pruning.protocol import PosteriorHistoryConfig, PosteriorSignal
 from posterior_history_pruning.selection import compact_after_followup
-from posterior_history_pruning.state import PosteriorHistoryState
+from posterior_history_pruning.state import (
+    PosteriorHistoryState,
+    locate_observation_boundary,
+)
 
 
 def _source() -> str:
@@ -135,3 +138,105 @@ def test_rendered_prompt_is_fully_detached_from_canonical_message_metadata() -> 
     rendered[0]["extra"]["request_metadata"].append("client-mutation")
 
     assert canonical["extra"]["request_metadata"] == ["original"]
+
+
+def _official_truncated_message(raw_output: str) -> str:
+    return (
+        "<returncode>0</returncode>\n"
+        "<warning>The output of your last command was too long.</warning>\n"
+        "<output_head>\n"
+        f"{raw_output[:5000]}\n"
+        "</output_head>\n"
+        "<elided_chars>\n"
+        f"{len(raw_output) - 10000} characters elided\n"
+        "</elided_chars>\n"
+        "<output_tail>\n"
+        f"{raw_output[-5000:]}\n"
+        "</output_tail>"
+    )
+
+
+def test_official_head_tail_template_is_tracked_and_compacted_as_visible_text() -> None:
+    state = PosteriorHistoryState(_config())
+    source = _source()
+    rendered_content = _official_truncated_message(source)
+    first = {"role": "user", "content": rendered_content}
+    second = {"role": "user", "content": f"Observation: {source}"}
+    messages = [{"role": "system", "content": "system"}, first]
+
+    assert state.record_observation(
+        first,
+        raw_output=source,
+        causing_command="sed -n '1,999p' model.py",
+        causing_path="model.py",
+    )
+    assert first["posterior_history_stats"]["boundary_mode"] == "official-head-tail"
+    assert first["posterior_history_stats"]["source_output_chars"] == len(source)
+    assert first["posterior_history_stats"]["visible_output_chars"] < len(source)
+    state.note_followup(PosteriorSignal(command="rg -n helper_5 model.py"))
+
+    messages.append(second)
+    state.record_observation(
+        second,
+        raw_output=source,
+        causing_command="sed -n '1,999p' model.py",
+        causing_path="model.py",
+    )
+    cold_view = state.render(messages)
+
+    assert "posterior_history_compaction" in cold_view[1]["content"]
+    assert '<output_posterior_view source="official-head-tail">' in cold_view[1]["content"]
+    assert "<output_head>" not in cold_view[1]["content"]
+    assert "def helper_5" in cold_view[1]["content"]
+    assert first["content"] == rendered_content
+
+
+def test_malformed_head_tail_template_fails_open_with_visible_telemetry() -> None:
+    state = PosteriorHistoryState(_config())
+    source = _source()
+    malformed = {"role": "user", "content": f"<output_head>{source[:5000]}</output_head>"}
+
+    assert not state.record_observation(
+        malformed,
+        raw_output=source,
+        causing_command="cat model.py",
+        causing_path="model.py",
+    )
+    stats = malformed["posterior_history_stats"]
+    assert stats["status"] == "untracked"
+    assert stats["reason"] == "rendered-output-boundary-not-found"
+    assert state.summary()["untracked_observations"] == 1
+    assert state.render([malformed])[0]["content"] == malformed["content"]
+
+
+def test_head_tail_boundary_rejects_mismatched_raw_anchors() -> None:
+    source = _source()
+    content = _official_truncated_message(source)
+
+    assert locate_observation_boundary(content, "x" * len(source)) is None
+
+
+def test_official_output_wrapper_does_not_confuse_output_with_returncode() -> None:
+    content = "<returncode>0</returncode>\n<output>\n0\n</output>"
+
+    boundary = locate_observation_boundary(content, "0")
+
+    assert boundary is not None
+    assert boundary.mode == "official-output"
+    assert boundary.prefix.endswith("<output>\n")
+    assert boundary.prefix + boundary.selection_output + boundary.suffix == content
+
+
+def test_empty_output_is_not_reported_as_an_unrecognized_template() -> None:
+    state = PosteriorHistoryState(_config())
+    message = {"role": "user", "content": "<returncode>0</returncode>\n<output>\n</output>"}
+
+    assert not state.record_observation(
+        message,
+        raw_output="",
+        causing_command="true",
+        causing_path="",
+    )
+    assert "posterior_history_stats" not in message
+    assert state.summary()["observations_seen"] == 0
+    assert state.summary()["untracked_observations"] == 0

@@ -82,7 +82,7 @@ def summarize_arm(path: Path) -> dict[str, Any]:
     predictions: Any = _read_json(path / "preds.json") if (path / "preds.json").is_file() else {}
     predictions = predictions if isinstance(predictions, dict) else {}
     calls = prompt_tokens = completion_tokens = total_tokens = 0
-    tracked = eligible = compacted = prompt_compactions = saved_tokens = 0
+    seen = tracked = untracked = eligible = compacted = prompt_compactions = saved_tokens = 0
     origin_tokens = retained_tokens = 0
     statuses: Counter[str] = Counter()
     reasons: Counter[str] = Counter()
@@ -110,11 +110,15 @@ def summarize_arm(path: Path) -> dict[str, Any]:
                     total_tokens += total
             stats = message.get("posterior_history_stats")
             if isinstance(stats, dict):
-                tracked += 1
+                seen += 1
                 status = str(stats.get("status", "unknown"))
                 reason = str(stats.get("reason", "unknown"))
                 statuses[status] += 1
                 reasons[reason] += 1
+                if status == "untracked":
+                    untracked += 1
+                    continue
+                tracked += 1
                 if stats.get("posterior_command"):
                     eligible += 1
                 if status == "compacted":
@@ -138,7 +142,9 @@ def summarize_arm(path: Path) -> dict[str, Any]:
         "agent_prompt_tokens": prompt_tokens,
         "agent_completion_tokens": completion_tokens,
         "agent_total_tokens": total_tokens,
+        "history_observations_seen": seen,
         "history_observations_tracked": tracked,
+        "history_observations_untracked": untracked,
         "posterior_eligible_observations": eligible,
         "posterior_compacted_observations": compacted,
         "history_prompt_compactions": prompt_compactions,
@@ -215,7 +221,9 @@ FIELDS = [
     "agent_prompt_tokens",
     "agent_completion_tokens",
     "agent_total_tokens",
+    "history_observations_seen",
     "history_observations_tracked",
+    "history_observations_untracked",
     "posterior_eligible_observations",
     "posterior_compacted_observations",
     "history_prompt_compactions",
@@ -293,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         prompt_delta = "-" if ratio is None else f"{(ratio - 1.0) * 100:+.1f}%"
         print(
             f"{row['arm']}: tasks={row['trajectories']} calls={row['agent_api_calls']} "
+            f"history_untracked={row['history_observations_untracked']} "
             f"history_compacted={row['posterior_compacted_observations']} "
             f"history_saved={row['estimated_history_tokens_saved']} "
             f"prompt_vs_baseline={prompt_delta}"
