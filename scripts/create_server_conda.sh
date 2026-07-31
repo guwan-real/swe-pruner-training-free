@@ -73,12 +73,14 @@ import sys
 
 import tf_pruning
 import zero_forward_pruning
+import posterior_history_pruning
 import yaml
 
 print("profile:", sys.argv[1])
 print("python:", sys.version.split()[0])
 print("tf_pruning:", tf_pruning.__file__)
 print("zero_forward_pruning:", zero_forward_pruning.__file__)
+print("posterior_history_pruning:", posterior_history_pruning.__file__)
 print("PyYAML:", yaml.__version__)
 
 if sys.argv[1] == "model":

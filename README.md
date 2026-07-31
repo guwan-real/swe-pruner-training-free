@@ -10,6 +10,21 @@
 每次剪枝的 model forward 和 LLM token 都严格为 0。完整设计见
 `docs/ZERO_FORWARD_PRUNING_DESIGN.md`。
 
+`posterior_history_pruning/` 是与 zero-forward 隔离的第二个在线实验：它让模型先完整阅读新的工具输出一次，随后只在更晚的临时 prompt 历史视图中，使用模型正常产生的后续 action 作为后验信号压缩旧 observation。它不额外请求 vLLM，不修改 canonical trajectory。设计与服务器交接见 `docs/POSTERIOR_HISTORY_PRUNING_DESIGN.md` 和 `docs/POSTERIOR_HISTORY_SERVER_HANDOFF.md`。
+
+后验实验使用独立 profile 和独立运行目录；服务器上先复制
+`configs/posterior_history_server_profile.example.env` 为
+`posterior_history_server_profile.env`，填入现有 `MINI_SWE_PYTHON`，再运行：
+
+```bash
+bash scripts/run_posterior_history_swebench.sh preflight
+bash scripts/run_posterior_history_swebench.sh smoke
+```
+
+它默认顺序运行同一 YAML 下的 `baseline` 和 `posterior_adaptive`，避免 vLLM
+并发影响 token 与 wall-time 对比。完整参数、结果汇总和官方评分入口在
+`docs/POSTERIOR_HISTORY_SERVER_HANDOFF.md`。
+
 ## 实现与端到端实验组
 
 | 方法 | 独立目录 | 训练 | 运行时模型/内部信号 | 主要用途 |
