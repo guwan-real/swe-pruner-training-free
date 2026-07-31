@@ -45,11 +45,7 @@ def _is_recovery_action(message: dict[str, Any]) -> bool:
     if message.get("role") != "assistant":
         return False
     content = message.get("content")
-    if (
-        isinstance(content, str)
-        and "/raw/" in content
-        and ("curl" in content or "wget" in content)
-    ):
+    if isinstance(content, str) and "/raw/" in content and ("curl" in content or "wget" in content):
         return True
     extra = message.get("extra")
     actions = extra.get("actions", []) if isinstance(extra, dict) else []

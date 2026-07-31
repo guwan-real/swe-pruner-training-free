@@ -71,8 +71,7 @@ def test_aggregate_reads_official_swe_pruner_fork_trajectory_shape(tmp_path: Pat
             {
                 "role": "assistant",
                 "content": (
-                    "```bash\ncurl -fsS "
-                    "http://host.docker.internal:8124/raw/random-identifier\n```"
+                    "```bash\ncurl -fsS http://host.docker.internal:8124/raw/random-identifier\n```"
                 ),
             },
             {

@@ -38,8 +38,7 @@ def main() -> int:
         missing = sorted({"pruner_url", "disable_pruner"} - set(runner_parameters))
         if missing:
             raise SystemExit(
-                "SWE-Pruner eval runner contract changed; missing parameters: "
-                + ", ".join(missing)
+                "SWE-Pruner eval runner contract changed; missing parameters: " + ", ".join(missing)
             )
         hook = "DefaultAgent.execute_action(self, action)"
         legacy_pruner_strategy = "empty-config-preserve-context-focus-question"
