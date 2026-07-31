@@ -28,6 +28,7 @@ PRUNING_THRESHOLD="${PRUNING_THRESHOLD:-0.5}"
 PARALLEL_ARMS="${PARALLEL_ARMS:-1}"
 ZERO_FORWARD_MIN_CHARS="${ZERO_FORWARD_MIN_CHARS:-1000}"
 ZERO_FORWARD_TIMEOUT="${ZERO_FORWARD_TIMEOUT:-5}"
+ZERO_FORWARD_RECOVERY_MAX_CHARS="${ZERO_FORWARD_RECOVERY_MAX_CHARS:-3000}"
 MIN_INPUT_TOKENS="${MIN_INPUT_TOKENS:-1500}"
 MIN_SAVINGS_TOKENS="${MIN_SAVINGS_TOKENS:-256}"
 MAX_RETENTION_RATIO="${MAX_RETENTION_RATIO:-0.85}"
@@ -77,6 +78,8 @@ Important overrides in zero_forward_server_profile.env:
   VLLM_MODEL_ID        Exact model id from :8015/v1/models (auto-detected otherwise).
   METHODS              Comma-separated zero-forward method names.
   PRUNING_THRESHOLD    Legacy /prune contract budget for ablation arms.
+  ZERO_FORWARD_RECOVERY_MAX_CHARS
+                       Maximum bounded recovery observation, default 3000.
   TASK_SLICE           mini-swe-agent slice, default 0:10.
   PARALLEL_ARMS=1      Run all arms concurrently for quality comparison.
   PARALLEL_ARMS=0      Run sequentially for clean latency measurement.
@@ -216,7 +219,7 @@ discover_base_config() {
     printf '%s\n' "$MINI_SWE_BASE_CONFIG"
     return
   fi
-  PYTHONPATH="$REPO_ROOT" "$MINI_SWE_PYTHON_BIN" - <<'PY'
+  MSWEA_SILENT_STARTUP=1 PYTHONPATH="$REPO_ROOT" "$MINI_SWE_PYTHON_BIN" - <<'PY'
 from pathlib import Path
 from minisweagent.config import builtin_config_dir
 
@@ -259,6 +262,7 @@ preflight() {
     "$PRUNING_THRESHOLD" \
     "$ZERO_FORWARD_TIMEOUT" \
     "$ZERO_FORWARD_MIN_CHARS" \
+    "$ZERO_FORWARD_RECOVERY_MAX_CHARS" \
     "$MIN_INPUT_TOKENS" \
     "$MIN_SAVINGS_TOKENS" \
     "$MAX_RETENTION_RATIO" \
@@ -271,16 +275,18 @@ import sys
 threshold = float(sys.argv[1])
 timeout = float(sys.argv[2])
 min_chars = int(sys.argv[3])
-min_input = int(sys.argv[4])
-min_savings = int(sys.argv[5])
-max_retention = float(sys.argv[6])
-max_cpu_ms = float(sys.argv[7])
-max_output_chars = int(sys.argv[8])
-raw_ttl_hours = float(sys.argv[9])
-workers = int(sys.argv[10])
+recovery_max_chars = int(sys.argv[4])
+min_input = int(sys.argv[5])
+min_savings = int(sys.argv[6])
+max_retention = float(sys.argv[7])
+max_cpu_ms = float(sys.argv[8])
+max_output_chars = int(sys.argv[9])
+raw_ttl_hours = float(sys.argv[10])
+workers = int(sys.argv[11])
 assert 0.0 <= threshold <= 1.0, "PRUNING_THRESHOLD must be in [0, 1]"
 assert timeout > 0, "ZERO_FORWARD_TIMEOUT must be positive"
 assert min_chars >= 0, "ZERO_FORWARD_MIN_CHARS must be non-negative"
+assert recovery_max_chars >= 256, "ZERO_FORWARD_RECOVERY_MAX_CHARS must be at least 256"
 assert min_input >= 0, "MIN_INPUT_TOKENS must be non-negative"
 assert min_savings >= 1, "MIN_SAVINGS_TOKENS must be positive"
 assert 0.0 < max_retention < 1.0, "MAX_RETENTION_RATIO must be in (0, 1)"
@@ -425,6 +431,7 @@ start_arm() {
     ZERO_FORWARD_THRESHOLD="$PRUNING_THRESHOLD"
     ZERO_FORWARD_TIMEOUT="$ZERO_FORWARD_TIMEOUT"
     ZERO_FORWARD_MIN_CHARS="$ZERO_FORWARD_MIN_CHARS"
+    ZERO_FORWARD_RECOVERY_MAX_CHARS="$ZERO_FORWARD_RECOVERY_MAX_CHARS"
     ZERO_FORWARD_ALLOW_BASELINE="$allow_baseline"
   )
   mkdir -p "$arm_dir"
@@ -454,6 +461,7 @@ write_manifest() {
     "$RESOLVED_MODEL_ID" \
     "$METHODS" \
     "$PRUNING_THRESHOLD" \
+    "$ZERO_FORWARD_RECOVERY_MAX_CHARS" \
     "$TASK_SLICE" \
     "$RESOLVED_BASE_CONFIG" \
     "$MINI_SWE_PYTHON_BIN" <<'PY'
@@ -462,7 +470,17 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
-output, api_base, model, methods, threshold, task_slice, base_config, mini_python = sys.argv[1:]
+(
+    output,
+    api_base,
+    model,
+    methods,
+    threshold,
+    recovery_max_chars,
+    task_slice,
+    base_config,
+    mini_python,
+) = sys.argv[1:]
 payload = {
     "created_at": datetime.now(timezone.utc).isoformat(),
     "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -471,6 +489,7 @@ payload = {
     "vllm_model": model,
     "methods": methods.replace(",", " ").split(),
     "contract_threshold": float(threshold),
+    "recovery_output_max_chars": int(recovery_max_chars),
     "task_slice": task_slice,
     "base_config": base_config,
     "mini_swe_python": mini_python,

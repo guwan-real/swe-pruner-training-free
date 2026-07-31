@@ -64,6 +64,7 @@ def probe_service(base_url: str) -> dict:
             "path": "model_config.py",
             "task": "Fix model configuration validation.",
             "request_id": "zero-forward-preflight",
+            "metadata": {"traffic_class": "preflight"},
         },
     )
     for field in ("model_input_token_cnt", "model_forward_count", "llm_token_count"):

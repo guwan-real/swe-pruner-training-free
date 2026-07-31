@@ -7,6 +7,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from zero_forward_pruning.text import estimate_tokens
+
 
 @dataclass(frozen=True)
 class ZeroForwardClientConfig:
@@ -14,6 +16,7 @@ class ZeroForwardClientConfig:
     threshold: float = 0.5
     timeout: float = 5.0
     min_chars: int = 1000
+    recovery_max_chars: int = 3000
 
     def __post_init__(self) -> None:
         if not self.url:
@@ -24,6 +27,8 @@ class ZeroForwardClientConfig:
             raise ValueError("timeout must be positive")
         if self.min_chars < 0:
             raise ValueError("min_chars must be non-negative")
+        if self.recovery_max_chars < 256:
+            raise ValueError("recovery_max_chars must be at least 256")
 
     @classmethod
     def from_env(cls) -> ZeroForwardClientConfig | None:
@@ -35,6 +40,7 @@ class ZeroForwardClientConfig:
             threshold=float(os.getenv("ZERO_FORWARD_THRESHOLD", "0.5")),
             timeout=float(os.getenv("ZERO_FORWARD_TIMEOUT", "5")),
             min_chars=int(os.getenv("ZERO_FORWARD_MIN_CHARS", "1000")),
+            recovery_max_chars=int(os.getenv("ZERO_FORWARD_RECOVERY_MAX_CHARS", "3000")),
         )
 
     @property
@@ -45,10 +51,13 @@ class ZeroForwardClientConfig:
 
 def _skipped(code: str, reason: str) -> dict[str, Any]:
     line_count = len(code.splitlines())
+    token_count = estimate_tokens(code)
     return {
         "pruned_code": code,
         "status": "skipped",
         "method": "client",
+        "origin_token_cnt": token_count,
+        "left_token_cnt": token_count,
         "model_input_token_cnt": 0,
         "model_forward_count": 0,
         "llm_token_count": 0,

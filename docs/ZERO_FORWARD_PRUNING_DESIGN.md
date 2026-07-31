@@ -125,6 +125,10 @@ curl -fsS 'http://host.docker.internal:PORT/raw/RANDOM_ID' \
   -o '/tmp/zero-forward-RANDOM_ID.txt'
 ```
 
+The banner explicitly tells the agent not to `cat` the saved file. It should
+search with `rg -n` and inspect only bounded `sed -n` ranges. Omission markers
+do not repeat the recovery invitation.
+
 The generated mini config adds Docker's
 `host.docker.internal:host-gateway` mapping. Source files can also be reread
 normally. Stored outputs expire after `RAW_TTL_HOURS`; IDs are path-validated
@@ -135,23 +139,34 @@ with `sed`, `rg`, `head`, or `tail`.
 If storage is unavailable, the request fails open instead of returning an
 irreversible truncation.
 
-The mini adapter recognizes an explicit `curl`/`wget` request to `/raw/<id>`
-and passes that single recovered output through unchanged, preventing recursive
-re-pruning.
+The mini adapter recognizes an explicit `curl`/`wget` request to `/raw/<id>`.
+Bounded slices pass through unchanged. An unbounded recovery echo above
+`ZERO_FORWARD_RECOVERY_MAX_CHARS` is replaced after execution by a compact
+receipt, while the exact file created by `curl -o` remains inside the task
+container. Remembered recovery paths are guarded on later unbounded reads too.
+This prevents the compacted view and complete recovered view from coexisting
+in all later prompts without rewriting commands or deleting message history.
 
 ## 7. Metrics and acceptance
 
 Every trajectory summary reports:
 
 - agent calls and prompt/completion tokens;
-- pruned/skipped/error counts;
+- total action attempts, client-side short-output skips, server requests and
+  server pruned/skipped counts separately;
 - pruner CPU latency;
 - observation retention;
-- recovery actions;
+- recovery actions, bounded bypasses and guarded full-output attempts;
 - pruner model forwards, model-input tokens and LLM tokens;
-- wall time and official SWE-Bench resolve rate.
+- wall time and official SWE-Bench resolve rate;
+- per-arm prompt-token, total-token, API-call and wall-time deltas versus an
+  equal-sized baseline arm.
 
 A run is invalid if any pruning arm reports a non-zero pruner model-forward or
 LLM-token count. Practical acceptance should require fewer agent prompt tokens,
 lower end-to-end wall time, no meaningful increase in agent rounds/recovery,
 and comparable official resolve rate.
+
+`/metrics` includes startup contract probes in its legacy total fields. The
+`probe_*` and `runtime_*` fields separate them. Trajectory summaries remain the
+source of truth for what the agent actually saw.

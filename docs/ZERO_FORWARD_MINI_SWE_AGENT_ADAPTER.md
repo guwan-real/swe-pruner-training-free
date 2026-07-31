@@ -60,9 +60,18 @@ no `PrunerClient` is constructed and the focus prompt remains. Baseline and
 pruning arms therefore use identical prompts and neither activates the legacy
 HTTP pruner.
 
-An explicit `curl`/`wget` action targeting `/raw/<id>` bypasses pruning once.
-Without this guard, the recovered long observation would immediately be
-compacted again and recovery could loop.
+An explicit `curl`/`wget` action targeting `/raw/<id>` is recognized as
+recovery. Bounded output passes through unchanged. If the command prints more
+than `ZERO_FORWARD_RECOVERY_MAX_CHARS`, the adapter replaces the full echo with
+a short receipt containing the saved file path and bounded `rg`/`sed`
+instructions. The command itself is never rewritten: `curl -o` still saves the
+exact file, but `&& cat file` cannot place a second full copy into every later
+prompt. Later unbounded reads of a remembered recovery path receive the same
+guard.
+
+This is deliberately an output-boundary policy. The adapter does not mutate
+earlier messages or silently change agent actions, preserving execution
+semantics and trajectory auditability.
 
 ## Request construction
 
@@ -91,6 +100,9 @@ The SWE-Pruner fork additionally receives the same mapping at
 `output.pruned_stats`; its existing `get_observation` method copies that mapping
 onto the user trajectory message. The model-facing observation template still
 renders only `output["output"]`.
+
+Recovery telemetry uses `method=recovery_bypass,status=skipped` for bounded
+reads and `method=recovery_guard,status=guarded` when a full echo is withheld.
 
 Preflight checks the exact hook signature and supports both historical
 `minisweagent.run.extra.swebench` and current

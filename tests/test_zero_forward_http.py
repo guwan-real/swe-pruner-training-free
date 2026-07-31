@@ -67,6 +67,26 @@ def _get_json(url: str) -> dict:
         return json.load(response)
 
 
+def test_client_side_skip_keeps_auditable_token_counts() -> None:
+    client = ZeroForwardClient(
+        ZeroForwardClientConfig(
+            url="http://127.0.0.1:1",
+            min_chars=1000,
+            recovery_max_chars=3000,
+        )
+    )
+    result = client.prune(code="short output", query="inspect output")
+    assert result["status"] == "skipped"
+    assert result["diagnostics"]["reason"] == "below-client-min-chars"
+    assert result["origin_token_cnt"] > 0
+    assert result["left_token_cnt"] == result["origin_token_cnt"]
+
+
+def test_recovery_guard_limit_rejects_unsafe_configuration() -> None:
+    with pytest.raises(ValueError, match="at least 256"):
+        ZeroForwardClientConfig(url="http://127.0.0.1:1", recovery_max_chars=128)
+
+
 def test_http_contract_metrics_and_raw_recovery(service) -> None:
     base, store = service
     client = ZeroForwardClient(ZeroForwardClientConfig(url=base, timeout=5, min_chars=0))
@@ -87,9 +107,30 @@ def test_http_contract_metrics_and_raw_recovery(service) -> None:
         assert response.read().decode() == raw
     metrics = _get_json(f"{base}/metrics")
     assert metrics["requests"] == 1
+    assert metrics["runtime_requests"] == 1
+    assert metrics["probe_requests"] == 0
     assert metrics["model_forward_count"] == 0
     assert metrics["llm_token_count"] == 0
     assert metrics["estimated_tokens_saved"] > 0
+
+
+def test_metrics_separate_preflight_probe_from_runtime(service) -> None:
+    base, _ = service
+    client = ZeroForwardClient(ZeroForwardClientConfig(url=base, timeout=5, min_chars=0))
+    result = client.prune(
+        code=_source(),
+        query="resolve_model",
+        request_id="zero-forward-preflight",
+        metadata={"traffic_class": "preflight"},
+    )
+    assert result["status"] == "pruned"
+    metrics = _get_json(f"{base}/metrics")
+    assert metrics["requests"] == 1
+    assert metrics["pruned"] == 1
+    assert metrics["probe_requests"] == 1
+    assert metrics["probe_pruned"] == 1
+    assert metrics["runtime_requests"] == 0
+    assert metrics["runtime_pruned"] == 0
 
 
 def test_removed_post_action_endpoint_is_not_available(service) -> None:

@@ -62,6 +62,8 @@ def test_every_method_is_reversible_and_zero_forward(tmp_path: Path, method: str
     assert result.raw_id is not None
     assert store.read(result.raw_id) == request.code
     assert "curl -fsS" in result.pruned_code
+    assert "Do not cat" in result.pruned_code
+    assert "use recovery command above" not in result.pruned_code
 
 
 def test_adaptive_method_does_not_search_contract_threshold(tmp_path: Path) -> None:

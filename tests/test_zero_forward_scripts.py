@@ -46,3 +46,8 @@ def test_conda_setup_disables_inherited_uv_before_activation() -> None:
     activate_position = source.index('conda activate "$ENV_NAME"')
     assert disable_position < activate_position
     assert "UV_PROJECT_ENVIRONMENT" in source
+
+
+def test_base_config_discovery_suppresses_mini_startup_banner() -> None:
+    source = (ROOT / "scripts" / "run_zero_forward_swebench.sh").read_text(encoding="utf-8")
+    assert 'MSWEA_SILENT_STARTUP=1 PYTHONPATH="$REPO_ROOT" "$MINI_SWE_PYTHON_BIN"' in source

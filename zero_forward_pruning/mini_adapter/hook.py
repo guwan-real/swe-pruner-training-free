@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import inspect
 import logging
+import re
+import shlex
 from functools import wraps
 from pathlib import PurePosixPath
 from typing import Any, Mapping
@@ -16,6 +18,8 @@ LOGGER = logging.getLogger("zero_forward_pruning.mini_adapter")
 UPSTREAM_BATCH_MODE = "upstream-batch-v2"
 SWE_PRUNER_SINGLE_MODE = "swe-pruner-single-v1"
 _INSTALLED = False
+_RECOVERY_PATHS_ATTRIBUTE = "_zero_forward_recovery_paths"
+_RECOVERY_URL_PATTERN = re.compile(r"https?://[^\s'\";|]+/raw/[A-Za-z0-9_-]+")
 
 
 def assert_mini_compatible(default_agent_class: type) -> str:
@@ -180,6 +184,161 @@ def _copy_extra(output: Mapping[str, Any]) -> dict[str, Any]:
     return dict(extra) if isinstance(extra, Mapping) else {}
 
 
+def _recovery_output_path(command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ""
+    verb = shell_verb(command)
+    if verb not in {"curl", "wget"}:
+        return ""
+    short_option = "-o" if verb == "curl" else "-O"
+    long_option = "--output" if verb == "curl" else "--output-document"
+    for index, token in enumerate(tokens):
+        if token in {short_option, long_option}:
+            if index + 1 < len(tokens):
+                output_path = tokens[index + 1]
+                return "" if output_path in {"-", "/dev/stdout", "/dev/fd/1"} else output_path
+        if token.startswith(f"{long_option}="):
+            output_path = token.removeprefix(f"{long_option}=")
+            return "" if output_path in {"-", "/dev/stdout", "/dev/fd/1"} else output_path
+        if token.startswith(short_option) and len(token) > len(short_option):
+            output_path = token.removeprefix(short_option)
+            return "" if output_path in {"-", "/dev/stdout", "/dev/fd/1"} else output_path
+    return ""
+
+
+def _remember_recovery_path(agent: Any, path: str) -> None:
+    if not path:
+        return
+    known = getattr(agent, _RECOVERY_PATHS_ATTRIBUTE, None)
+    if not isinstance(known, set):
+        known = set()
+        setattr(agent, _RECOVERY_PATHS_ATTRIBUTE, known)
+    known.add(path)
+
+
+def _known_recovery_path(agent: Any, command: str) -> str:
+    known = getattr(agent, _RECOVERY_PATHS_ATTRIBUTE, set())
+    if not isinstance(known, set):
+        return ""
+    return next(
+        (
+            path
+            for path in sorted(known, key=len, reverse=True)
+            if isinstance(path, str) and path and path in command
+        ),
+        "",
+    )
+
+
+def _recovery_url(command: str) -> str:
+    match = _RECOVERY_URL_PATTERN.search(command)
+    return match.group(0) if match else ""
+
+
+def _recovery_guard_message(
+    *,
+    code: str,
+    saved_path: str,
+    recovery_url: str,
+) -> str:
+    line_count = len(code.splitlines())
+    token_count = estimate_tokens(code)
+    if saved_path:
+        quoted_path = shlex.quote(saved_path)
+        location = f"The exact output is saved at {quoted_path}."
+        fetch = ""
+    else:
+        fallback_path = "/tmp/zero-forward-recovered.txt"
+        quoted_path = shlex.quote(fallback_path)
+        location = "The exact output remains available from the recovery URL."
+        fetch = (
+            f"\nSave it without printing it:\n"
+            f"curl -fsS {shlex.quote(recovery_url)} -o {quoted_path}"
+            if recovery_url
+            else ""
+        )
+    return (
+        "<zero_forward_recovery_guard>\n"
+        f"Withheld an unbounded recovery echo ({line_count} lines, ~{token_count} tokens) "
+        "so it does not remain in every later model prompt.\n"
+        f"{location}{fetch}\n"
+        "Inspect only the needed evidence with bounded commands, for example:\n"
+        f"rg -n 'SYMBOL|ERROR|TODO' {quoted_path}\n"
+        f"sed -n '1,60p' {quoted_path}  # adjust the roughly 40-60 line range\n"
+        f"Do not use cat {quoted_path} or otherwise print the complete file.\n"
+        "</zero_forward_recovery_guard>"
+    )
+
+
+def _handle_recovery_output(
+    agent: Any,
+    *,
+    command: str,
+    code: str,
+    output: Mapping[str, Any],
+    max_chars: int,
+) -> dict[str, Any]:
+    result_output = dict(output)
+    output_path = _recovery_output_path(command)
+    if output_path:
+        _remember_recovery_path(agent, output_path)
+    known_path = output_path or _known_recovery_path(agent, command)
+    origin_tokens = estimate_tokens(code)
+    line_count = len(code.splitlines())
+    extra = _copy_extra(result_output)
+    returncode = output.get("returncode")
+    command_succeeded = returncode is None or returncode == 0
+    if len(code) > max_chars and command_succeeded:
+        guarded = _recovery_guard_message(
+            code=code,
+            saved_path=known_path,
+            recovery_url=_recovery_url(command),
+        )
+        result_output["output"] = guarded
+        left_tokens = estimate_tokens(guarded)
+        extra["zero_forward_pruning"] = {
+            "method": "recovery_guard",
+            "status": "guarded",
+            "origin_token_cnt": origin_tokens,
+            "left_token_cnt": left_tokens,
+            "model_input_token_cnt": 0,
+            "model_forward_count": 0,
+            "llm_token_count": 0,
+            "original_line_count": line_count,
+            "kept_line_count": len(guarded.splitlines()),
+            "retention_ratio": left_tokens / origin_tokens if origin_tokens else 1.0,
+            "diagnostics": {
+                "reason": "unbounded-recovery-output-withheld",
+                "recovery_output_max_chars": max_chars,
+                "saved_path": known_path,
+                "recovery_url": _recovery_url(command),
+            },
+        }
+    else:
+        reason = (
+            "bounded-recovery-output-bypass"
+            if command_succeeded
+            else "recovery-command-failed-bypass"
+        )
+        extra["zero_forward_pruning"] = {
+            "method": "recovery_bypass",
+            "status": "skipped",
+            "origin_token_cnt": origin_tokens,
+            "left_token_cnt": origin_tokens,
+            "model_input_token_cnt": 0,
+            "model_forward_count": 0,
+            "llm_token_count": 0,
+            "original_line_count": line_count,
+            "kept_line_count": line_count,
+            "retention_ratio": 1.0,
+            "diagnostics": {"reason": reason},
+        }
+    result_output["extra"] = extra
+    return result_output
+
+
 def _publish_swe_pruner_stats(output: dict[str, Any]) -> dict[str, Any]:
     """Expose stats where the official SWE-Pruner fork stores trajectory metadata."""
 
@@ -204,25 +363,18 @@ def apply_to_output(
         return result_output
     command = action.get("command", "")
     command = command if isinstance(command, str) else ""
-    if "/raw/" in command and shell_verb(command) in {"curl", "wget"}:
-        tokens = estimate_tokens(code)
-        line_count = len(code.splitlines())
-        extra = _copy_extra(result_output)
-        extra["zero_forward_pruning"] = {
-            "method": "recovery_bypass",
-            "status": "skipped",
-            "origin_token_cnt": tokens,
-            "left_token_cnt": tokens,
-            "model_input_token_cnt": 0,
-            "model_forward_count": 0,
-            "llm_token_count": 0,
-            "original_line_count": line_count,
-            "kept_line_count": line_count,
-            "retention_ratio": 1.0,
-            "diagnostics": {"reason": "raw-recovery-action-bypass"},
-        }
-        result_output["extra"] = extra
-        return result_output
+    is_recovery_fetch = "/raw/" in command and shell_verb(command) in {"curl", "wget"}
+    is_known_recovery_read = bool(_known_recovery_path(agent, command))
+    if is_recovery_fetch or is_known_recovery_read:
+        config = getattr(client, "config", None)
+        recovery_max_chars = getattr(config, "recovery_max_chars", 3000)
+        return _handle_recovery_output(
+            agent,
+            command=command,
+            code=code,
+            output=result_output,
+            max_chars=recovery_max_chars,
+        )
     extra_vars = getattr(agent, "extra_template_vars", {})
     task = extra_vars.get("task", "") if isinstance(extra_vars, Mapping) else ""
     task = task if isinstance(task, str) else ""

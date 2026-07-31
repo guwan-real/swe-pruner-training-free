@@ -87,6 +87,9 @@ only an empty dictionary, which does not construct `PrunerClient`. This keeps
 the existing `context_focus_question` prompt for both baseline and pruning
 arms. Do not manually add `--pruner-url` or `--disable-pruner`.
 
+Config discovery sets `MSWEA_SILENT_STARTUP=1` so the SWE-Pruner fork's startup
+banner cannot pollute the captured YAML path.
+
 ## One-task smoke
 
 ```bash
@@ -108,6 +111,26 @@ pruner_llm_tokens = 0
 pruner_model_input_tokens = 0
 pruning_errors = 0
 ```
+
+Use the trajectory summary for agent counts:
+
+```text
+pruning_attempts    all tool outputs seen by the adapter
+client_skips        outputs shorter than ZERO_FORWARD_MIN_CHARS
+server_requests     actual POST /prune calls from the agent
+server_pruned       runtime observations compacted by the service
+server_skipped      runtime service cost-gate skips
+recovery_guarded    full recovery echoes withheld from persistent history
+```
+
+`results` also reports each arm's prompt-token and wall-time percentage versus
+the baseline. The CSV/JSON contains exact API-call, prompt-token, total-token,
+wall-time and resolve-rate deltas. Comparisons are emitted only when both arms
+have the same non-zero trajectory count.
+
+Service `/metrics` also sees the startup preflight fixture. Its legacy
+`requests/pruned/skipped` totals therefore include that probe; use
+`runtime_requests/runtime_pruned/runtime_skipped` for agent traffic.
 
 Keep `MAX_OUTPUT_CHARS=9000` unless the base mini YAML uses a different
 long-observation limit. It ensures all selected evidence reaches Qwen instead
@@ -157,7 +180,11 @@ The generated mini YAML adds:
 ```
 
 A compact observation contains a `curl` command pointing to its arm's service.
-Recovery actions are counted in `summary.csv`. The raw store is under:
+It instructs the agent to save the output and inspect bounded ranges, never
+`cat` the complete file. `ZERO_FORWARD_RECOVERY_MAX_CHARS` defaults to `3000`;
+larger recovery output is replaced with a short receipt after the command
+executes, while the saved file remains available. Recovery actions and guarded
+echoes are counted separately in `summary.csv`. The raw store is under:
 
 ```text
 <run-root>/raw/<method>/

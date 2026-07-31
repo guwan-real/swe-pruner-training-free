@@ -32,9 +32,16 @@ class ServiceMetrics:
     cpu_latency_ms: float = 0.0
     model_forward_count: int = 0
     llm_token_count: int = 0
+    probe_requests: int = 0
+    probe_pruned: int = 0
+    probe_skipped: int = 0
+    probe_errors: int = 0
+    probe_input_tokens: int = 0
+    probe_output_tokens: int = 0
+    probe_cpu_latency_ms: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
-    def record(self, result: PruningResult) -> None:
+    def record(self, result: PruningResult, *, probe: bool = False) -> None:
         with self._lock:
             self.requests += 1
             if result.status == "pruned":
@@ -48,9 +55,22 @@ class ServiceMetrics:
             self.cpu_latency_ms += result.latency_ms
             self.model_forward_count += result.model_forward_count
             self.llm_token_count += result.llm_token_count
+            if probe:
+                self.probe_requests += 1
+                if result.status == "pruned":
+                    self.probe_pruned += 1
+                elif result.status == "error":
+                    self.probe_errors += 1
+                else:
+                    self.probe_skipped += 1
+                self.probe_input_tokens += result.origin_token_cnt
+                self.probe_output_tokens += result.left_token_cnt
+                self.probe_cpu_latency_ms += result.latency_ms
 
     def to_dict(self) -> dict[str, int | float]:
         with self._lock:
+            runtime_input_tokens = self.input_tokens - self.probe_input_tokens
+            runtime_output_tokens = self.output_tokens - self.probe_output_tokens
             return {
                 "requests": self.requests,
                 "pruned": self.pruned,
@@ -62,6 +82,18 @@ class ServiceMetrics:
                 "cpu_latency_ms": self.cpu_latency_ms,
                 "model_forward_count": self.model_forward_count,
                 "llm_token_count": self.llm_token_count,
+                "probe_requests": self.probe_requests,
+                "probe_pruned": self.probe_pruned,
+                "probe_skipped": self.probe_skipped,
+                "probe_errors": self.probe_errors,
+                "runtime_requests": self.requests - self.probe_requests,
+                "runtime_pruned": self.pruned - self.probe_pruned,
+                "runtime_skipped": self.skipped - self.probe_skipped,
+                "runtime_errors": self.errors - self.probe_errors,
+                "runtime_input_tokens": runtime_input_tokens,
+                "runtime_output_tokens": runtime_output_tokens,
+                "runtime_estimated_tokens_saved": runtime_input_tokens - runtime_output_tokens,
+                "runtime_cpu_latency_ms": self.cpu_latency_ms - self.probe_cpu_latency_ms,
             }
 
 
@@ -165,7 +197,11 @@ class ZeroForwardHandler(BaseHTTPRequestHandler):
         try:
             request = PruningRequest.from_dict(self._read_payload())
             result = self.server.pruner.prune(request)
-            self.server.metrics.record(result)
+            is_probe = (
+                request.request_id == "zero-forward-preflight"
+                or request.metadata.get("traffic_class") == "preflight"
+            )
+            self.server.metrics.record(result, probe=is_probe)
             if self.server.metrics.requests % 100 == 0:
                 self.server.raw_store.purge_expired()
             self._send_json(HTTPStatus.OK, result.to_dict())
@@ -182,7 +218,11 @@ class ZeroForwardHandler(BaseHTTPRequestHandler):
                     reason="server-fail-open",
                     error=str(exc),
                 )
-                self.server.metrics.record(result)
+                is_probe = (
+                    request.request_id == "zero-forward-preflight"
+                    or request.metadata.get("traffic_class") == "preflight"
+                )
+                self.server.metrics.record(result, probe=is_probe)
                 self._send_json(HTTPStatus.OK, result.to_dict())
             else:
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": str(exc)})

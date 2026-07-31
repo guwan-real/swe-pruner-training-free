@@ -105,8 +105,11 @@ def _render_compacted(
     header = (
         f'<zero_forward_compaction kept_lines="{len(kept_lines)}" '
         f'original_lines="{len(lines)}" raw_id="{raw_id}">\n'
-        f"Recover the exact full output to a file with: "
+        "Recover only if the omitted evidence is necessary. Save the exact output "
+        "without printing it:\n"
         f"curl -fsS '{recovery_url}' -o '{recovery_path}'\n"
+        "Then search with rg -n and read roughly 40-60 lines at a time with sed -n. "
+        f"Do not cat '{recovery_path}' or print the complete file.\n"
         "</zero_forward_compaction>"
     )
     output = [header]
@@ -121,7 +124,7 @@ def _render_compacted(
             line_no += 1
         end = line_no - 1
         label = f"line {start}" if start == end else f"lines {start}-{end}"
-        output.append(f"... [zero-forward omitted {label}; use recovery command above] ...")
+        output.append(f"... [zero-forward omitted {label}] ...")
     return "\n".join(output)
 
 

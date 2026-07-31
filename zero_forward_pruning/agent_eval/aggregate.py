@@ -86,10 +86,15 @@ def summarize_arm(path: Path) -> dict[str, Any]:
     if not isinstance(predictions, dict):
         predictions = {}
     statuses: Counter[str] = Counter()
+    skip_reasons: Counter[str] = Counter()
     exit_statuses: Counter[str] = Counter()
     prompt_tokens = completion_tokens = total_tokens = 0
     agent_calls = pruning_calls = recovery_actions = 0
+    client_skips = server_requests = server_pruned = server_skipped = 0
+    recovery_bypassed = recovery_guarded = 0
     input_tokens = output_tokens = 0
+    server_input_tokens = server_output_tokens = 0
+    pruned_input_tokens = pruned_output_tokens = 0
     pruner_latency_ms = 0.0
     model_forwards = llm_tokens = model_input_tokens = 0
     for trajectory in trajectories:
@@ -114,9 +119,35 @@ def summarize_arm(path: Path) -> dict[str, Any]:
             if stats is None:
                 continue
             pruning_calls += 1
-            statuses[str(stats.get("status", "unknown"))] += 1
-            input_tokens += int(stats.get("origin_token_cnt", 0) or 0)
-            output_tokens += int(stats.get("left_token_cnt", 0) or 0)
+            status = str(stats.get("status", "unknown"))
+            method = str(stats.get("method", ""))
+            statuses[status] += 1
+            diagnostics = stats.get("diagnostics")
+            if isinstance(diagnostics, dict) and isinstance(diagnostics.get("reason"), str):
+                skip_reasons[diagnostics["reason"]] += 1
+            origin_tokens = int(stats.get("origin_token_cnt", 0) or 0)
+            left_tokens = int(stats.get("left_token_cnt", 0) or 0)
+            input_tokens += origin_tokens
+            output_tokens += left_tokens
+            is_recovery = method in {"recovery_bypass", "recovery_guard"}
+            is_client = method == "client"
+            if is_client and status == "skipped":
+                client_skips += 1
+            elif method == "recovery_bypass":
+                recovery_bypassed += 1
+            elif method == "recovery_guard":
+                recovery_guarded += 1
+            elif not is_client and not is_recovery:
+                server_requests += 1
+                server_input_tokens += origin_tokens
+                server_output_tokens += left_tokens
+                if status == "pruned":
+                    server_pruned += 1
+                elif status == "skipped":
+                    server_skipped += 1
+            if status == "pruned":
+                pruned_input_tokens += origin_tokens
+                pruned_output_tokens += left_tokens
             pruner_latency_ms += float(stats.get("latency_ms", 0.0) or 0.0)
             model_forwards += int(stats.get("model_forward_count", 0) or 0)
             llm_tokens += int(stats.get("llm_token_count", 0) or 0)
@@ -134,9 +165,16 @@ def summarize_arm(path: Path) -> dict[str, Any]:
         "agent_completion_tokens": completion_tokens,
         "agent_total_tokens": total_tokens,
         "pruning_calls": pruning_calls,
+        "pruning_attempts": pruning_calls,
+        "client_skips": client_skips,
+        "server_requests": server_requests,
+        "server_pruned": server_pruned,
+        "server_skipped": server_skipped,
         "pruned": statuses.get("pruned", 0),
         "pruning_skipped": statuses.get("skipped", 0),
         "pruning_errors": statuses.get("error", 0) + statuses.get("client_error", 0),
+        "recovery_bypassed": recovery_bypassed,
+        "recovery_guarded": recovery_guarded,
         "pruner_model_forwards": model_forwards,
         "pruner_llm_tokens": llm_tokens,
         "pruner_model_input_tokens": model_input_tokens,
@@ -144,11 +182,18 @@ def summarize_arm(path: Path) -> dict[str, Any]:
         "original_observation_estimated_tokens": input_tokens,
         "kept_observation_estimated_tokens": output_tokens,
         "observation_retention_ratio": (output_tokens / input_tokens if input_tokens else None),
+        "server_observation_retention_ratio": (
+            server_output_tokens / server_input_tokens if server_input_tokens else None
+        ),
+        "effective_pruned_retention_ratio": (
+            pruned_output_tokens / pruned_input_tokens if pruned_input_tokens else None
+        ),
         "recovery_actions": recovery_actions,
         "runner_exit_code": exit_code,
         "wall_time_seconds": _wall_time(path),
         "exit_statuses": dict(sorted(exit_statuses.items())),
         "pruning_statuses": dict(sorted(statuses.items())),
+        "pruning_reasons": dict(sorted(skip_reasons.items())),
         "resolved": None,
         "graded": None,
         "resolve_rate": None,
@@ -207,7 +252,45 @@ def summarize_run(run_root: Path) -> list[dict[str, Any]]:
         if grader:
             row["resolved"], row["graded"] = grader
             row["resolve_rate"] = row["resolved"] / row["graded"] if row["graded"] else None
+    _add_baseline_comparisons(rows)
     return rows
+
+
+def _ratio(value: int | float | None, baseline: int | float | None) -> float | None:
+    if value is None or baseline is None or baseline == 0:
+        return None
+    return value / baseline
+
+
+def _delta(value: int | float | None, baseline: int | float | None) -> int | float | None:
+    if value is None or baseline is None:
+        return None
+    return value - baseline
+
+
+def _add_baseline_comparisons(rows: list[dict[str, Any]]) -> None:
+    baseline = next((row for row in rows if row.get("arm") == "baseline"), None)
+    comparison_fields = {
+        "agent_api_calls_delta_vs_baseline": ("agent_api_calls", _delta),
+        "agent_prompt_tokens_delta_vs_baseline": ("agent_prompt_tokens", _delta),
+        "agent_prompt_token_ratio_vs_baseline": ("agent_prompt_tokens", _ratio),
+        "agent_total_tokens_delta_vs_baseline": ("agent_total_tokens", _delta),
+        "agent_total_token_ratio_vs_baseline": ("agent_total_tokens", _ratio),
+        "wall_time_seconds_delta_vs_baseline": ("wall_time_seconds", _delta),
+        "wall_time_ratio_vs_baseline": ("wall_time_seconds", _ratio),
+        "resolve_rate_delta_vs_baseline": ("resolve_rate", _delta),
+    }
+    baseline_trajectories = baseline.get("trajectories") if baseline else None
+    for row in rows:
+        comparable = (
+            baseline is not None
+            and baseline_trajectories
+            and row.get("trajectories") == baseline_trajectories
+        )
+        for output_field, (source_field, operation) in comparison_fields.items():
+            row[output_field] = (
+                operation(row.get(source_field), baseline.get(source_field)) if comparable else None
+            )
 
 
 FIELDS = [
@@ -220,9 +303,16 @@ FIELDS = [
     "agent_completion_tokens",
     "agent_total_tokens",
     "pruning_calls",
+    "pruning_attempts",
+    "client_skips",
+    "server_requests",
+    "server_pruned",
+    "server_skipped",
     "pruned",
     "pruning_skipped",
     "pruning_errors",
+    "recovery_bypassed",
+    "recovery_guarded",
     "pruner_model_forwards",
     "pruner_llm_tokens",
     "pruner_model_input_tokens",
@@ -230,12 +320,22 @@ FIELDS = [
     "original_observation_estimated_tokens",
     "kept_observation_estimated_tokens",
     "observation_retention_ratio",
+    "server_observation_retention_ratio",
+    "effective_pruned_retention_ratio",
     "recovery_actions",
     "runner_exit_code",
     "wall_time_seconds",
     "resolved",
     "graded",
     "resolve_rate",
+    "agent_api_calls_delta_vs_baseline",
+    "agent_prompt_tokens_delta_vs_baseline",
+    "agent_prompt_token_ratio_vs_baseline",
+    "agent_total_tokens_delta_vs_baseline",
+    "agent_total_token_ratio_vs_baseline",
+    "wall_time_seconds_delta_vs_baseline",
+    "wall_time_ratio_vs_baseline",
+    "resolve_rate_delta_vs_baseline",
 ]
 
 
@@ -289,12 +389,23 @@ def main(argv: list[str] | None = None) -> int:
             retention_text = "-" if retention is None else f"{retention:.3f}"
             resolve_rate = row["resolve_rate"]
             resolve_text = "-" if resolve_rate is None else f"{resolve_rate:.3f}"
+            prompt_ratio = row["agent_prompt_token_ratio_vs_baseline"]
+            prompt_delta_text = (
+                "-" if prompt_ratio is None else f"{(prompt_ratio - 1.0) * 100:+.1f}%"
+            )
+            wall_ratio = row["wall_time_ratio_vs_baseline"]
+            wall_delta_text = "-" if wall_ratio is None else f"{(wall_ratio - 1.0) * 100:+.1f}%"
             print(
                 f"{row['arm']}: tasks={row['trajectories']} "
                 f"agent_calls={row['agent_api_calls']} "
+                f"server_requests={row['server_requests']} "
+                f"server_pruned={row['server_pruned']} "
                 f"pruner_forwards={row['pruner_model_forwards']} "
                 f"pruner_llm_tokens={row['pruner_llm_tokens']} "
                 f"retention={retention_text} recovery={row['recovery_actions']} "
+                f"guarded={row['recovery_guarded']} "
+                f"prompt_vs_baseline={prompt_delta_text} "
+                f"wall_vs_baseline={wall_delta_text} "
                 f"resolve_rate={resolve_text}"
             )
         return 0

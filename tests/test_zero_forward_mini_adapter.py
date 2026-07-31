@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -16,9 +17,10 @@ from zero_forward_pruning.mini_adapter.swebench import _configure_legacy_pruner
 
 
 class FakeClient:
-    def __init__(self, *, fail: bool = False):
+    def __init__(self, *, fail: bool = False, recovery_max_chars: int = 3000):
         self.fail = fail
         self.payload: dict[str, Any] | None = None
+        self.config = SimpleNamespace(recovery_max_chars=recovery_max_chars)
 
     def prune(self, **kwargs):
         self.payload = kwargs
@@ -94,8 +96,111 @@ def test_raw_recovery_action_is_not_pruned_again() -> None:
     stats = result["extra"]["zero_forward_pruning"]
     assert stats["method"] == "recovery_bypass"
     assert stats["status"] == "skipped"
-    assert stats["diagnostics"]["reason"] == "raw-recovery-action-bypass"
+    assert stats["diagnostics"]["reason"] == "bounded-recovery-output-bypass"
     assert stats["model_forward_count"] == 0
+
+
+def test_failed_recovery_output_is_not_hidden_even_when_large() -> None:
+    client = FakeClient(recovery_max_chars=256)
+    raw = "curl: transfer failed\n" * 100
+    result = apply_to_output(
+        FakeAgent(),
+        action={"command": "curl -fsS http://host.docker.internal:8124/raw/random-id"},
+        output={"output": raw, "returncode": 22},
+        client=client,  # type: ignore[arg-type]
+        action_index=0,
+    )
+
+    assert result["output"] == raw
+    assert client.payload is None
+    assert (
+        result["extra"]["zero_forward_pruning"]["diagnostics"]["reason"]
+        == "recovery-command-failed-bypass"
+    )
+
+
+def test_stdout_recovery_target_is_not_reported_as_saved_file() -> None:
+    client = FakeClient(recovery_max_chars=256)
+    result = apply_to_output(
+        FakeAgent(),
+        action={"command": ("curl -fsS http://host.docker.internal:8124/raw/random-id -o -")},
+        output={"output": "x" * 400, "returncode": 0},
+        client=client,  # type: ignore[arg-type]
+        action_index=0,
+    )
+
+    assert result["extra"]["zero_forward_pruning"]["status"] == "guarded"
+    assert "remains available from the recovery URL" in result["output"]
+    assert "saved at -" not in result["output"]
+    assert client.payload is None
+
+
+def test_large_recovery_echo_is_withheld_but_saved_file_remains_available() -> None:
+    client = FakeClient(recovery_max_chars=1000)
+    agent = FakeAgent()
+    raw = "class SeparableModel:\n    value = 1\n" * 400
+    result = apply_to_output(
+        agent,
+        action={
+            "command": (
+                "curl -fsS 'http://host.docker.internal:8124/raw/random-id' "
+                "-o /tmp/separable_full.py && cat /tmp/separable_full.py"
+            )
+        },
+        output={"output": raw, "returncode": 0},
+        client=client,  # type: ignore[arg-type]
+        action_index=0,
+    )
+
+    assert result["output"] != raw
+    assert "zero_forward_recovery_guard" in result["output"]
+    assert "/tmp/separable_full.py" in result["output"]
+    assert "Do not use cat" in result["output"]
+    assert client.payload is None
+    stats = result["extra"]["zero_forward_pruning"]
+    assert stats["method"] == "recovery_guard"
+    assert stats["status"] == "guarded"
+    assert stats["left_token_cnt"] < stats["origin_token_cnt"]
+    assert stats["diagnostics"]["saved_path"] == "/tmp/separable_full.py"
+
+    # A later unbounded read of the remembered recovery file is guarded too,
+    # even though the raw URL no longer appears in the command.
+    repeated = apply_to_output(
+        agent,
+        action={"command": "cat /tmp/separable_full.py"},
+        output={"output": raw, "returncode": 0},
+        client=client,  # type: ignore[arg-type]
+        action_index=0,
+    )
+    assert repeated["extra"]["zero_forward_pruning"]["status"] == "guarded"
+    assert repeated["output"] != raw
+
+
+def test_bounded_recovery_slice_is_returned_unchanged() -> None:
+    client = FakeClient(recovery_max_chars=1000)
+    agent = FakeAgent()
+    first = apply_to_output(
+        agent,
+        action={
+            "command": (
+                "curl -fsS 'http://host.docker.internal:8124/raw/random-id' -o /tmp/recovered.py"
+            )
+        },
+        output={"output": "", "returncode": 0},
+        client=client,  # type: ignore[arg-type]
+        action_index=0,
+    )
+    assert first["output"] == ""
+    bounded = "def relevant_function():\n    return True\n"
+    second = apply_to_output(
+        agent,
+        action={"command": "sed -n '40,60p' /tmp/recovered.py"},
+        output={"output": bounded, "returncode": 0},
+        client=client,  # type: ignore[arg-type]
+        action_index=0,
+    )
+    assert second["output"] == bounded
+    assert second["extra"]["zero_forward_pruning"]["method"] == "recovery_bypass"
 
 
 def test_mini_signature_guard() -> None:

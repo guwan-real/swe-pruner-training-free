@@ -61,3 +61,9 @@ zero-forward-prune-preflight --url http://127.0.0.1:8124
 The service exposes `/health`, `/metrics`, `/prune`, and an unguessable
 `/raw/<id>` recovery route. Stored observations expire according to
 `--raw-ttl-hours`.
+
+The mini adapter prevents recovered full output from becoming permanent prompt
+history. Recovery output over `ZERO_FORWARD_RECOVERY_MAX_CHARS` is replaced by
+bounded `rg`/`sed` guidance after the exact file has been saved. Metrics expose
+separate `probe_*` and `runtime_*` counters so startup preflight traffic is not
+mistaken for agent pruning.
