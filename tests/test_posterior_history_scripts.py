@@ -13,6 +13,8 @@ def test_posterior_launcher_is_sequential_and_does_not_start_a_pruner_service() 
     assert 'PARALLEL_ARMS="${PARALLEL_ARMS:-0}"' in source
     assert "posterior_history_pruning.mini_adapter.swebench" in source
     assert "POSTERIOR_HISTORY_ENABLED" in source
+    assert 'AGENT_STEP_LIMIT="${AGENT_STEP_LIMIT:-100}"' in source
+    assert '--step-limit "$AGENT_STEP_LIMIT"' in source
     assert "start_service" not in source
     assert "zero_forward_pruning" not in source
 
@@ -38,7 +40,7 @@ def test_posterior_launcher_is_safe_under_errexit_and_nounset() -> None:
 def test_explicit_environment_overrides_server_profile(tmp_path: Path) -> None:
     profile = tmp_path / "posterior.env"
     profile.write_text(
-        "POSTERIOR_MIN_INPUT_TOKENS=1500\nTASK_SLICE=0:5\nSKIP_BASELINE=0\n",
+        "POSTERIOR_MIN_INPUT_TOKENS=1500\nTASK_SLICE=0:5\nSKIP_BASELINE=0\nAGENT_STEP_LIMIT=0\n",
         encoding="utf-8",
     )
     environment = os.environ.copy()
@@ -49,6 +51,7 @@ def test_explicit_environment_overrides_server_profile(tmp_path: Path) -> None:
             "TASK_SLICE": "0:20",
             "SKIP_BASELINE": "1",
             "RUN_TAG": "precedence_probe",
+            "AGENT_STEP_LIMIT": "100",
         }
     )
 
@@ -64,6 +67,7 @@ def test_explicit_environment_overrides_server_profile(tmp_path: Path) -> None:
     assert "TASK_SLICE=0:20" in completed.stdout
     assert "SKIP_BASELINE=1" in completed.stdout
     assert "RUN_TAG=precedence_probe" in completed.stdout
+    assert "AGENT_STEP_LIMIT=100" in completed.stdout
 
 
 def test_threshold_sweep_is_posterior_only_and_serial() -> None:
@@ -77,5 +81,6 @@ def test_threshold_sweep_is_posterior_only_and_serial() -> None:
     assert "SKIP_BASELINE=1" in sweep
     assert "PARALLEL_ARMS=0" in sweep
     assert "POSTERIOR_HISTORY_METHODS=adaptive" in sweep
+    assert "AGENT_STEP_LIMIT=100" in sweep
     assert 'TASK_SLICE="$task_slice"' in sweep
     assert 'bash "$LAUNCHER" launch' in sweep

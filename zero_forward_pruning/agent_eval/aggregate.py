@@ -97,20 +97,26 @@ def summarize_arm(path: Path) -> dict[str, Any]:
     pruned_input_tokens = pruned_output_tokens = 0
     pruner_latency_ms = 0.0
     model_forwards = llm_tokens = model_input_tokens = 0
+    calls_per_trajectory: list[int] = []
     for trajectory in trajectories:
         payload = _read_json(trajectory)
         if not isinstance(payload, dict):
             continue
         info = payload.get("info", {})
+        reported_calls = 0
         if isinstance(info, dict):
             exit_statuses[str(info.get("exit_status", "unknown"))] += 1
+            model_stats = info.get("model_stats", {})
+            if isinstance(model_stats, dict):
+                reported_calls = int(model_stats.get("api_calls", 0) or 0)
+        usage_calls = 0
         for message in payload.get("messages", []):
             if not isinstance(message, dict):
                 continue
             if message.get("role") == "assistant":
                 prompt, completion, total = _usage(message)
                 if prompt or completion or total:
-                    agent_calls += 1
+                    usage_calls += 1
                     prompt_tokens += prompt
                     completion_tokens += completion
                     total_tokens += total
@@ -152,6 +158,9 @@ def summarize_arm(path: Path) -> dict[str, Any]:
             model_forwards += int(stats.get("model_forward_count", 0) or 0)
             llm_tokens += int(stats.get("llm_token_count", 0) or 0)
             model_input_tokens += int(stats.get("model_input_token_cnt", 0) or 0)
+        trajectory_calls = max(reported_calls, usage_calls)
+        calls_per_trajectory.append(trajectory_calls)
+        agent_calls += trajectory_calls
     exit_code = None
     if (path / "exit_code").is_file():
         exit_code = int((path / "exit_code").read_text(encoding="utf-8").strip())
@@ -161,6 +170,12 @@ def summarize_arm(path: Path) -> dict[str, Any]:
         "trajectories": len(trajectories),
         "submitted": exit_statuses.get("Submitted", 0),
         "agent_api_calls": agent_calls,
+        "agent_api_calls_mean_per_task": (
+            agent_calls / len(calls_per_trajectory) if calls_per_trajectory else None
+        ),
+        "agent_api_calls_max_per_task": max(calls_per_trajectory, default=0),
+        "agent_step_limit_hits": sum(value >= 100 for value in calls_per_trajectory),
+        "agent_step_limit_exits": exit_statuses.get("LimitsExceeded", 0),
         "agent_prompt_tokens": prompt_tokens,
         "agent_completion_tokens": completion_tokens,
         "agent_total_tokens": total_tokens,
@@ -299,6 +314,10 @@ FIELDS = [
     "trajectories",
     "submitted",
     "agent_api_calls",
+    "agent_api_calls_mean_per_task",
+    "agent_api_calls_max_per_task",
+    "agent_step_limit_hits",
+    "agent_step_limit_exits",
     "agent_prompt_tokens",
     "agent_completion_tokens",
     "agent_total_tokens",
@@ -398,6 +417,8 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 f"{row['arm']}: tasks={row['trajectories']} "
                 f"agent_calls={row['agent_api_calls']} "
+                f"max_calls_per_task={row['agent_api_calls_max_per_task']} "
+                f"limit_hits={row['agent_step_limit_hits']} "
                 f"server_requests={row['server_requests']} "
                 f"server_pruned={row['server_pruned']} "
                 f"pruner_forwards={row['pruner_model_forwards']} "

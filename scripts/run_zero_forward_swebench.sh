@@ -22,6 +22,7 @@ DATASET_SPLIT="${DATASET_SPLIT:-test}"
 TASK_SLICE="${TASK_SLICE:-0:10}"
 TASK_FILTER="${TASK_FILTER:-}"
 AGENT_WORKERS="${AGENT_WORKERS:-1}"
+AGENT_STEP_LIMIT="${AGENT_STEP_LIMIT:-100}"
 GRADER_WORKERS="${GRADER_WORKERS:-4}"
 METHODS="${METHODS:-safe_rules,intent_ir,intent_structure,adaptive_evidence}"
 PRUNING_THRESHOLD="${PRUNING_THRESHOLD:-0.5}"
@@ -81,6 +82,7 @@ Important overrides in zero_forward_server_profile.env:
   ZERO_FORWARD_RECOVERY_MAX_CHARS
                        Maximum bounded recovery observation, default 3000.
   TASK_SLICE           mini-swe-agent slice, default 0:10.
+  AGENT_STEP_LIMIT=100 Hard per-task model-call limit (required).
   PARALLEL_ARMS=1      Run all arms concurrently for quality comparison.
   PARALLEL_ARMS=0      Run sequentially for clean latency measurement.
 
@@ -269,7 +271,8 @@ preflight() {
     "$MAX_CPU_MS" \
     "$MAX_OUTPUT_CHARS" \
     "$RAW_TTL_HOURS" \
-    "$AGENT_WORKERS" <<'PY'
+    "$AGENT_WORKERS" \
+    "$AGENT_STEP_LIMIT" <<'PY'
 import sys
 
 threshold = float(sys.argv[1])
@@ -283,6 +286,7 @@ max_cpu_ms = float(sys.argv[8])
 max_output_chars = int(sys.argv[9])
 raw_ttl_hours = float(sys.argv[10])
 workers = int(sys.argv[11])
+step_limit = int(sys.argv[12])
 assert 0.0 <= threshold <= 1.0, "PRUNING_THRESHOLD must be in [0, 1]"
 assert timeout > 0, "ZERO_FORWARD_TIMEOUT must be positive"
 assert min_chars >= 0, "ZERO_FORWARD_MIN_CHARS must be non-negative"
@@ -294,6 +298,7 @@ assert max_cpu_ms > 0, "MAX_CPU_MS must be positive"
 assert max_output_chars >= 1000, "MAX_OUTPUT_CHARS must be at least 1000"
 assert raw_ttl_hours > 0, "RAW_TTL_HOURS must be positive"
 assert workers >= 1, "AGENT_WORKERS must be positive"
+assert step_limit == 100, "AGENT_STEP_LIMIT must be exactly 100"
 PY
   [[ "$PARALLEL_ARMS" == "0" || "$PARALLEL_ARMS" == "1" ]] \
     || fail "PARALLEL_ARMS must be 0 or 1"
@@ -396,6 +401,7 @@ generate_shared_config() {
     --api-base "$VLLM_API_BASE" \
     --api-key "$VLLM_API_KEY" \
     --timeout 180 \
+    --step-limit "$AGENT_STEP_LIMIT" \
     >"$output.meta.json"
   SHARED_CONFIG="$output"
 }
@@ -464,7 +470,8 @@ write_manifest() {
     "$ZERO_FORWARD_RECOVERY_MAX_CHARS" \
     "$TASK_SLICE" \
     "$RESOLVED_BASE_CONFIG" \
-    "$MINI_SWE_PYTHON_BIN" <<'PY'
+    "$MINI_SWE_PYTHON_BIN" \
+    "$AGENT_STEP_LIMIT" <<'PY'
 import json
 import subprocess
 import sys
@@ -480,6 +487,7 @@ from datetime import datetime, timezone
     task_slice,
     base_config,
     mini_python,
+    agent_step_limit,
 ) = sys.argv[1:]
 payload = {
     "created_at": datetime.now(timezone.utc).isoformat(),
@@ -493,6 +501,7 @@ payload = {
     "task_slice": task_slice,
     "base_config": base_config,
     "mini_swe_python": mini_python,
+    "agent_step_limit": int(agent_step_limit),
     "timing": "tool output is compacted before the next agent model request",
     "trained_parameters": 0,
     "pruner_model_forwards_per_observation": 0,

@@ -53,6 +53,9 @@ def test_aggregate_reports_zero_cost_and_recovery(tmp_path: Path) -> None:
     (trajectory_dir / "instance.traj.json").write_text(json.dumps(payload), encoding="utf-8")
     summary = summarize_arm(arm)
     assert summary["agent_api_calls"] == 1
+    assert summary["agent_api_calls_mean_per_task"] == 1
+    assert summary["agent_api_calls_max_per_task"] == 1
+    assert summary["agent_step_limit_hits"] == 0
     assert summary["agent_total_tokens"] == 120
     assert summary["pruned"] == 1
     assert summary["server_requests"] == 1

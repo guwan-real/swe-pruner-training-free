@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+DEFAULT_AGENT_STEP_LIMIT = 100
+
 
 def load_yaml(path: Path) -> dict[str, Any]:
     try:
@@ -35,8 +37,12 @@ def adapt_config(
     api_base: str,
     api_key: str = "EMPTY",
     timeout: float = 180.0,
+    step_limit: int = DEFAULT_AGENT_STEP_LIMIT,
 ) -> dict[str, Any]:
     """Create a fair config shared by baseline and every zero-forward arm."""
+
+    if step_limit <= 0:
+        raise ValueError("step_limit must be positive")
 
     config = copy.deepcopy(dict(base))
     model = config.setdefault("model", {})
@@ -64,6 +70,7 @@ def adapt_config(
     # The adapter owns the only pruning path.  Keeping this section would
     # double-prune when the installed mini is the SWE-Pruner fork.
     agent.pop("pruner", None)
+    agent["step_limit"] = step_limit
     run_args = environment.setdefault("run_args", ["--rm"])
     if not isinstance(run_args, list) or not all(isinstance(item, str) for item in run_args):
         raise ValueError("base config environment.run_args must be a string array")
@@ -93,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-base", default="http://127.0.0.1:8015/v1")
     parser.add_argument("--api-key", default="EMPTY")
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--step-limit", type=int, default=DEFAULT_AGENT_STEP_LIMIT)
     return parser
 
 
@@ -108,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         api_base=args.api_base,
         api_key=args.api_key,
         timeout=args.timeout,
+        step_limit=args.step_limit,
     )
     write_yaml(config, output)
     print(
@@ -117,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
                 "output": str(output),
                 "model": config["model"]["model_name"],
                 "api_base": config["model"]["model_kwargs"]["api_base"],
+                "step_limit": config["agent"]["step_limit"],
                 "legacy_pruner_removed": "pruner" not in config["agent"],
                 "docker_host_recovery_enabled": (
                     "--add-host=host.docker.internal:host-gateway"

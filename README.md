@@ -29,6 +29,10 @@ bash scripts/run_posterior_history_swebench.sh smoke
 `scripts/run_posterior_threshold_sweep.sh launch` 只跑 posterior，并按 1000、500
 两个 `MIN_INPUT_TOKENS` 门槛串行实验；该脚本不会重新运行 baseline。
 
+所有真实 SWE-Bench launcher 都会在最终生成的 mini-swe-agent YAML 中强制写入
+`agent.step_limit: 100`。这个限制按单个 task 计数，而 summary 中的总 calls 是
+整个 slice 的合计；汇总同时报告每题平均值、单题最大值和达到 100 次上限的题数。
+
 ## 实现与端到端实验组
 
 | 方法 | 独立目录 | 训练 | 运行时模型/内部信号 | 主要用途 |

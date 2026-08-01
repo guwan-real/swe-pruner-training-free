@@ -29,6 +29,9 @@ def test_server_script_help() -> None:
     assert "preflight|launch|smoke|status|results|grade|stop" in completed.stdout
     assert "active uv/venv" in completed.stdout
     assert "never falls back" in completed.stdout
+    assert "AGENT_STEP_LIMIT=100" in completed.stdout
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert '--step-limit "$AGENT_STEP_LIMIT"' in source
 
 
 def test_dry_run_removes_uv_environment_without_writing(tmp_path: Path) -> None:
@@ -116,6 +119,7 @@ def test_preflight_uses_existing_mini_agent_environment(tmp_path: Path) -> None:
                 "@dataclass",
                 "class AgentConfig:",
                 "    pruner: object | None = None",
+                "    step_limit: int = 0",
             ]
         ),
         encoding="utf-8",

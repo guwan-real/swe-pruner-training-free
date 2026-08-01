@@ -12,7 +12,7 @@ PROFILE_OVERRIDE_NAMES=(
   ENV_NAME BASE_DIR WORK_DIR POSTERIOR_HISTORY_RUNS_DIR
   VLLM_API_BASE VLLM_API_KEY VLLM_MODEL_ID MINI_SWE_PYTHON MINI_SWE_BASE_CONFIG
   MINI_EXTRA_BIN SWEBENCH_PYTHON DATASET_SUBSET DATASET_SPLIT TASK_SLICE TASK_FILTER
-  AGENT_WORKERS GRADER_WORKERS POSTERIOR_HISTORY_METHODS POSTERIOR_HOT_OBSERVATIONS
+  AGENT_WORKERS AGENT_STEP_LIMIT GRADER_WORKERS POSTERIOR_HISTORY_METHODS POSTERIOR_HOT_OBSERVATIONS
   POSTERIOR_MIN_INPUT_TOKENS POSTERIOR_MIN_SAVINGS_TOKENS
   POSTERIOR_MAX_RETENTION_RATIO POSTERIOR_BLOCK_MAX_LINES POSTERIOR_MAX_OUTPUT_CHARS
   PARALLEL_ARMS MIN_FREE_DISK_GB RUN_TAG SKIP_BASELINE
@@ -48,6 +48,7 @@ DATASET_SPLIT="${DATASET_SPLIT:-test}"
 TASK_SLICE="${TASK_SLICE:-0:5}"
 TASK_FILTER="${TASK_FILTER:-}"
 AGENT_WORKERS="${AGENT_WORKERS:-1}"
+AGENT_STEP_LIMIT="${AGENT_STEP_LIMIT:-100}"
 GRADER_WORKERS="${GRADER_WORKERS:-4}"
 POSTERIOR_HISTORY_METHODS="${POSTERIOR_HISTORY_METHODS:-adaptive}"
 POSTERIOR_HOT_OBSERVATIONS="${POSTERIOR_HOT_OBSERVATIONS:-2}"
@@ -88,6 +89,7 @@ Important profile overrides:
   MINI_SWE_PYTHON, MINI_SWE_BASE_CONFIG, VLLM_MODEL_ID
   POSTERIOR_HISTORY_METHODS=safe,adaptive
   POSTERIOR_HOT_OBSERVATIONS=2
+  AGENT_STEP_LIMIT=100       Hard per-task model-call limit (required).
   TASK_SLICE=0:5
 
 PARALLEL_ARMS defaults to 0 because token and wall-time comparisons need a
@@ -225,9 +227,10 @@ preflight() {
   [[ "$SKIP_BASELINE" == "0" || "$SKIP_BASELINE" == "1" ]] || fail "SKIP_BASELINE must be 0 or 1"
   "$PYTHON_BIN" - "$POSTERIOR_HOT_OBSERVATIONS" "$POSTERIOR_MIN_INPUT_TOKENS" \
     "$POSTERIOR_MIN_SAVINGS_TOKENS" "$POSTERIOR_MAX_RETENTION_RATIO" \
-    "$POSTERIOR_BLOCK_MAX_LINES" "$POSTERIOR_MAX_OUTPUT_CHARS" "$AGENT_WORKERS" <<'PY'
+    "$POSTERIOR_BLOCK_MAX_LINES" "$POSTERIOR_MAX_OUTPUT_CHARS" "$AGENT_WORKERS" \
+    "$AGENT_STEP_LIMIT" <<'PY'
 import sys
-hot, min_input, min_savings, retention, block, cap, workers = sys.argv[1:]
+hot, min_input, min_savings, retention, block, cap, workers, step_limit = sys.argv[1:]
 assert int(hot) >= 1, "POSTERIOR_HOT_OBSERVATIONS must be at least 1"
 assert int(min_input) >= 0, "POSTERIOR_MIN_INPUT_TOKENS must be non-negative"
 assert int(min_savings) >= 1, "POSTERIOR_MIN_SAVINGS_TOKENS must be positive"
@@ -235,6 +238,7 @@ assert 0 < float(retention) < 1, "POSTERIOR_MAX_RETENTION_RATIO must be in (0, 1
 assert int(block) >= 1, "POSTERIOR_BLOCK_MAX_LINES must be positive"
 assert int(cap) >= 1000, "POSTERIOR_MAX_OUTPUT_CHARS must be at least 1000"
 assert int(workers) >= 1, "AGENT_WORKERS must be positive"
+assert int(step_limit) == 100, "AGENT_STEP_LIMIT must be exactly 100"
 PY
   split_methods
   check_disk_path "repository" "$REPO_ROOT"
@@ -253,7 +257,8 @@ generate_shared_config() {
   local output="$RUN_ROOT/configs/agent.yaml"
   "$PYTHON_BIN" -m posterior_history_pruning.mini_adapter.config_adapter \
     --base-config "$RESOLVED_BASE_CONFIG" --output "$output" --model-id "$RESOLVED_MODEL_ID" \
-    --api-base "$VLLM_API_BASE" --api-key "$VLLM_API_KEY" --timeout 180 >"$output.meta.json"
+    --api-base "$VLLM_API_BASE" --api-key "$VLLM_API_KEY" --timeout 180 \
+    --step-limit "$AGENT_STEP_LIMIT" >"$output.meta.json"
   SHARED_CONFIG="$output"
 }
 
@@ -297,7 +302,7 @@ write_manifest() {
     "$POSTERIOR_HOT_OBSERVATIONS" "$MINI_SWE_PYTHON_BIN" \
     "$POSTERIOR_MIN_INPUT_TOKENS" "$POSTERIOR_MIN_SAVINGS_TOKENS" \
     "$POSTERIOR_MAX_RETENTION_RATIO" "$POSTERIOR_BLOCK_MAX_LINES" \
-    "$POSTERIOR_MAX_OUTPUT_CHARS" "$SKIP_BASELINE" <<'PY'
+    "$POSTERIOR_MAX_OUTPUT_CHARS" "$SKIP_BASELINE" "$AGENT_STEP_LIMIT" <<'PY'
 import json
 import subprocess
 import sys
@@ -318,6 +323,7 @@ from datetime import datetime, timezone
     block_max_lines,
     max_output_chars,
     skip_baseline,
+    agent_step_limit,
 ) = sys.argv[1:]
 payload = {
     "created_at": datetime.now(timezone.utc).isoformat(),
@@ -336,6 +342,7 @@ payload = {
     "block_max_lines": int(block_max_lines),
     "max_output_chars": int(max_output_chars),
     "baseline_included": skip_baseline != "1",
+    "agent_step_limit": int(agent_step_limit),
     "timing": "full current observation, posterior-guided cold-history prompt view",
     "trained_parameters": 0,
     "pruner_model_forwards_per_observation": 0,
@@ -382,6 +389,7 @@ show_config() {
   printf 'TASK_SLICE=%s\n' "$TASK_SLICE"
   printf 'POSTERIOR_HISTORY_METHODS=%s\n' "$POSTERIOR_HISTORY_METHODS"
   printf 'POSTERIOR_MIN_INPUT_TOKENS=%s\n' "$POSTERIOR_MIN_INPUT_TOKENS"
+  printf 'AGENT_STEP_LIMIT=%s\n' "$AGENT_STEP_LIMIT"
   printf 'PARALLEL_ARMS=%s\n' "$PARALLEL_ARMS"
   printf 'SKIP_BASELINE=%s\n' "$SKIP_BASELINE"
   printf 'RUN_TAG=%s\n' "${RUN_TAG:-}"

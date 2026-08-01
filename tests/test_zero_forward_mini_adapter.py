@@ -381,6 +381,7 @@ def test_config_adapter_removes_legacy_pruner_and_adds_recovery_host() -> None:
     base = {
         "model": {"model_name": "old", "model_kwargs": {}},
         "agent": {
+            "step_limit": 0,
             "pruner": {"url": "http://old"},
             "system_template": "emit <context_focus_question>...</context_focus_question>",
         },
@@ -393,9 +394,20 @@ def test_config_adapter_removes_legacy_pruner_and_adds_recovery_host() -> None:
     )
     assert result["model"]["model_name"] == "hosted_vllm/Qwen3.5-27B"
     assert "pruner" not in result["agent"]
+    assert result["agent"]["step_limit"] == 100
     assert "context_focus_question" in result["agent"]["system_template"]
     # This is what the official fork's runner does without --disable-pruner.
     # The empty value is false, so DefaultAgent does not construct PrunerClient.
     assert not result["agent"].setdefault("pruner", {})
     assert "--add-host=host.docker.internal:host-gateway" in result["environment"]["run_args"]
     assert "pruner" in base["agent"]
+
+
+def test_config_adapter_rejects_unbounded_step_limit() -> None:
+    with pytest.raises(ValueError, match="step_limit must be positive"):
+        adapt_config(
+            {"model": {}, "agent": {}, "environment": {}},
+            model_id="Qwen3.5-27B",
+            api_base="http://127.0.0.1:8015/v1",
+            step_limit=0,
+        )

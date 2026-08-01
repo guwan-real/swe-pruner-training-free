@@ -12,6 +12,10 @@
 
 运行入口是 `scripts/run_posterior_history_swebench.sh`。它在激活 conda 前主动移除继承的 uv/venv，并使用 `MINI_SWE_PYTHON` 调用已有的 official fork。默认 `PARALLEL_ARMS=0`，因为并发 arm 会争用同一 vLLM，无法公平比较 wall time。
 
+launcher 固定 `AGENT_STEP_LIMIT=100`，并覆盖 base YAML 中缺失、为 `0`（无限）或
+其他值的 `agent.step_limit`。preflight 会拒绝非 100 的实验配置，最终值同时写入
+`configs/agent.yaml`、`configs/agent.yaml.meta.json` 和 `manifest.json`。
+
 ## Arms
 
 默认只包含：
@@ -59,9 +63,10 @@ GRADER_WORKERS=32 bash scripts/run_posterior_threshold_sweep.sh grade
 
 launcher 的配置优先级为“显式命令环境 > server profile > 内置默认值”。因此即使
 本地 profile 写着 `POSTERIOR_MIN_INPUT_TOKENS=1500`，sweep 传入的 1000/500
-也不会被覆盖。每个 run 的 `manifest.json` 会记录最终生效的阈值和
-`baseline_included=false`。posterior-only 的 `results` 不要求 run 目录中存在
-baseline；相对 baseline 的 delta 字段留空，后续与旧 baseline 统一比较即可。
+也不会被覆盖。每个 run 的 `manifest.json` 会记录最终生效的阈值、
+`baseline_included=false` 和每题 100 次模型调用上限。posterior-only 的
+`results` 不要求 run 目录中存在 baseline；相对 baseline 的 delta 字段留空，
+后续与旧 baseline 统一比较即可。
 
 ## Smoke 通过条件
 
@@ -79,6 +84,10 @@ baseline；相对 baseline 的 delta 字段留空，后续与旧 baseline 统一
 `boundary_mode=official-head-tail`，不能再静默消失；
 `history_observations_untracked>0` 时先检查 trajectory 中的模板格式，不要通过
 降低阈值掩盖边界问题。
+
+调用次数要看 `agent_api_calls_mean_per_task` 和 `agent_api_calls_max_per_task`；
+`agent_api_calls` 是整个 task slice 的合计。`agent_step_limit_hits` 或
+`agent_step_limit_exits` 大于 0 表示确实有任务运行到了 100 次硬上限。
 
 本版本的 `history_token_estimators` 应为
 `max-lexical-ascii4-unicode1-v2`。若仍然没有压缩，先比较

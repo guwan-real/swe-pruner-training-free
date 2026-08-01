@@ -13,6 +13,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.parse_args(argv)
     mode = detect_installed_mini_mode()
+    from minisweagent.agents.default import AgentConfig
+
+    agent_fields = getattr(AgentConfig, "__dataclass_fields__", {})
+    if "step_limit" not in agent_fields:
+        raise SystemExit("SWE-Pruner mini fork AgentConfig has no step_limit field")
     try:
         from minisweagent.run.extra import swebench
     except ImportError:
@@ -36,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
                 "mini_mode": mode,
                 "runner": swebench.__name__,
                 "query_boundary": "DefaultAgent.query -> model.query(messages)",
+                "step_limit_field": True,
                 "model_forward_count": 0,
                 "llm_token_count": 0,
             },

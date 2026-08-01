@@ -11,12 +11,15 @@ from zero_forward_pruning.mini_adapter.hook import (
 
 def main() -> int:
     try:
-        from minisweagent.agents.default import DefaultAgent
+        from minisweagent.agents.default import AgentConfig, DefaultAgent
     except ImportError as exc:
         raise SystemExit(
             "cannot import minisweagent; use MINI_SWE_PYTHON from its existing environment"
         ) from exc
     mini_mode = assert_mini_compatible(DefaultAgent)
+    agent_fields = getattr(AgentConfig, "__dataclass_fields__", {})
+    if "step_limit" not in agent_fields:
+        raise SystemExit("mini-swe-agent AgentConfig has no step_limit field")
     try:
         from minisweagent.run.extra import swebench  # type: ignore[attr-defined]
 
@@ -53,6 +56,7 @@ def main() -> int:
                 "hook": hook,
                 "runner": runner,
                 "legacy_pruner_strategy": legacy_pruner_strategy,
+                "step_limit_field": True,
                 "model_forward_count": 0,
             }
         )

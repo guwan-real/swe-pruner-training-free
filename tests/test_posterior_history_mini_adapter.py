@@ -240,6 +240,7 @@ def test_config_adapter_keeps_prompt_identical_while_removing_legacy_pruner() ->
     base = {
         "model": {"model_name": "old", "model_kwargs": {}},
         "agent": {
+            "step_limit": 0,
             "pruner": {"url": "http://legacy"},
             "system_template": "Emit <context_focus_question> before each action.",
         },
@@ -249,4 +250,15 @@ def test_config_adapter_keeps_prompt_identical_while_removing_legacy_pruner() ->
     assert result["model"]["model_name"] == "hosted_vllm/Qwen3.5-27B"
     assert result["agent"]["system_template"] == base["agent"]["system_template"]
     assert "pruner" not in result["agent"]
+    assert result["agent"]["step_limit"] == 100
     assert "pruner" in base["agent"]
+
+
+def test_config_adapter_rejects_unbounded_step_limit() -> None:
+    with pytest.raises(ValueError, match="step_limit must be positive"):
+        adapt_config(
+            {"model": {}, "agent": {}},
+            model_id="Qwen3.5-27B",
+            api_base="http://127.0.0.1:8015/v1",
+            step_limit=0,
+        )

@@ -70,6 +70,10 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
 
     rows = {row["arm"]: row for row in summarize_run(tmp_path)}
     adaptive = rows["posterior_adaptive"]
+    assert adaptive["agent_api_calls"] == 1
+    assert adaptive["agent_api_calls_mean_per_task"] == 1
+    assert adaptive["agent_api_calls_max_per_task"] == 1
+    assert adaptive["agent_step_limit_hits"] == 0
     assert adaptive["history_observations_seen"] == 1
     assert adaptive["history_observations_tracked"] == 1
     assert adaptive["history_observations_untracked"] == 0

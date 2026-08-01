@@ -1,5 +1,9 @@
 # B200 服务器引导
 
+真实 SWE-Bench baseline 与所有 IR/AST arms 都在生成配置中固定
+`agent.step_limit: 100`。这是单个 task 的模型调用上限，不是整个 task slice 的
+总调用上限；base YAML 中的缺失值或 `0` 会被覆盖。
+
 本项目沿用现有服务器约定：
 
 ```text

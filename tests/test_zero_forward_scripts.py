@@ -24,6 +24,11 @@ def test_launcher_documents_five_zero_forward_arms() -> None:
     ):
         assert arm in result.stdout
     assert "zero LLM forwards" in result.stdout
+    assert "AGENT_STEP_LIMIT=100" in result.stdout
+
+    source = (ROOT / "scripts" / "run_zero_forward_swebench.sh").read_text(encoding="utf-8")
+    assert 'AGENT_STEP_LIMIT="${AGENT_STEP_LIMIT:-100}"' in source
+    assert '--step-limit "$AGENT_STEP_LIMIT"' in source
 
 
 def test_zero_forward_package_has_no_model_scoring_endpoint() -> None:

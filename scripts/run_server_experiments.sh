@@ -23,6 +23,7 @@ DATASET_SPLIT="${DATASET_SPLIT:-test}"
 TASK_SLICE="${TASK_SLICE:-0:10}"
 TASK_FILTER="${TASK_FILTER:-}"
 AGENT_WORKERS="${AGENT_WORKERS:-4}"
+AGENT_STEP_LIMIT="${AGENT_STEP_LIMIT:-100}"
 GRADER_WORKERS="${GRADER_WORKERS:-4}"
 KEEP_RATIOS="${KEEP_RATIOS:-0.5}"
 METHODS="${METHODS:-ir_structural,execution_ast,ir_ast_hybrid}"
@@ -69,6 +70,7 @@ Defaults:
   DATASET_SPLIT=test
   TASK_SLICE=0:10
   AGENT_WORKERS=4
+  AGENT_STEP_LIMIT=100
   KEEP_RATIOS=0.5
   METHODS=ir_structural,execution_ast,ir_ast_hybrid
   PARALLEL_ARMS=1
@@ -87,6 +89,7 @@ Useful overrides:
   METHODS              Comma-separated methods from the default list.
   RUN_TAG               Stable output name. Required to resume a chosen run.
   PARALLEL_ARMS=0       Run experiment arms sequentially in the foreground.
+  AGENT_STEP_LIMIT=100  Hard per-task model-call limit (required).
   MIN_FREE_DISK_GB=10   Hard minimum on repository and Docker filesystems.
   WARN_FREE_DISK_GB=50  Print a warning below this free-space level.
 
@@ -378,6 +381,8 @@ resolve_grader_python() {
 }
 
 preflight() {
+  [[ "$AGENT_STEP_LIMIT" == "100" ]] \
+    || fail "AGENT_STEP_LIMIT must be exactly 100"
   [[ "${SKIP_PREFLIGHT:-0}" != "1" ]] || {
     RESOLVED_MODEL_ID="${VLLM_MODEL_ID:-qwen3.5-27b-dry-run}"
     RESOLVED_BASE_CONFIG="${MINI_SWE_BASE_CONFIG:-/tmp/mini-swe-pruning.yaml}"
@@ -422,6 +427,7 @@ response_fields = getattr(
     getattr(PruneResponse, "__fields__", {}),
 )
 assert "pruner" in agent_fields
+assert "step_limit" in agent_fields
 assert {"query", "code", "threshold"} <= set(request_fields)
 assert {
     "pruned_code",
@@ -569,6 +575,7 @@ generate_config() {
     --keep-ratio "$keep_ratio" \
     --min-chars "$PRUNER_MIN_CHARS" \
     --timeout "$REQUEST_TIMEOUT" \
+    --step-limit "$AGENT_STEP_LIMIT" \
     >"$output.meta.json"
 }
 
@@ -642,7 +649,8 @@ write_manifest() {
     "$KEEP_RATIOS" \
     "$RESOLVED_BASE_CONFIG" \
     "$MINI_EXTRA_BIN" \
-    "$MINI_SWE_PYTHON_BIN" <<'PY'
+    "$MINI_SWE_PYTHON_BIN" \
+    "$AGENT_STEP_LIMIT" <<'PY'
 import json
 import subprocess
 import sys
@@ -662,6 +670,7 @@ from datetime import datetime, timezone
     base_config,
     mini_extra_bin,
     mini_swe_python,
+    agent_step_limit,
 ) = sys.argv[1:]
 payload = {
     "created_at": datetime.now(timezone.utc).isoformat(),
@@ -682,6 +691,7 @@ payload = {
     "mini_swe_base_config": base_config,
     "mini_extra_bin": mini_extra_bin,
     "mini_swe_python": mini_swe_python,
+    "agent_step_limit": int(agent_step_limit),
     "budget_semantics": "mini_threshold = 1 - training_free_keep_ratio",
 }
 with open(output, "w", encoding="utf-8") as handle:

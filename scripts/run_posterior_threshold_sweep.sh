@@ -27,6 +27,7 @@ Optional environment:
   RUN_TAG_PREFIX=posterior_threshold_YYYYMMDD_HHMMSS
   POSTERIOR_THRESHOLDS="1000,500"
   TASK_SLICE=0:20
+  AGENT_STEP_LIMIT=100 (fixed by the launcher)
   GRADER_WORKERS=32
 EOF
 }
@@ -62,6 +63,7 @@ launch_sweep() {
       PARALLEL_ARMS=0 \
       POSTERIOR_HISTORY_METHODS=adaptive \
       POSTERIOR_MIN_INPUT_TOKENS="$threshold" \
+      AGENT_STEP_LIMIT=100 \
       TASK_SLICE="$task_slice" \
       RUN_TAG="$run_tag" \
       bash "$LAUNCHER" launch

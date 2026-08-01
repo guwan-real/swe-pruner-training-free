@@ -17,6 +17,7 @@ from agent_eval.config_adapter import (
 def _base_config() -> dict:
     return {
         "agent": {
+            "step_limit": 0,
             "system_template": "Use <context_focus_question>question</context_focus_question>",
             "instance_template": "Solve {{task}}",
             "format_error_template": "retry",
@@ -48,6 +49,19 @@ def test_config_adapter_targets_local_vllm_without_training() -> None:
     assert "set_cache_control" not in adapted["model"]
     assert adapted["agent"]["pruner"]["threshold"] == pytest.approx(0.65)
     assert adapted["agent"]["pruner"]["url"].endswith(":8113/prune")
+    assert adapted["agent"]["step_limit"] == 100
+
+
+def test_config_adapter_rejects_unbounded_agent_step_limit() -> None:
+    with pytest.raises(ValueError, match="step_limit must be positive"):
+        adapt_config(
+            _base_config(),
+            model_id="Qwen3.5-27B",
+            api_base="http://127.0.0.1:8015/v1",
+            pruner_url="http://127.0.0.1:8111/prune",
+            keep_ratio=0.5,
+            step_limit=0,
+        )
 
 
 def test_config_adapter_rejects_standard_agent_without_pruner_hook() -> None:
@@ -157,6 +171,9 @@ def test_agent_summary_and_prediction_conversion(tmp_path: Path) -> None:
 
     rows = summarize_run(run_root)
     assert rows[0]["api_calls"] == 2
+    assert rows[0]["api_calls_mean_per_task"] == 2
+    assert rows[0]["api_calls_max_per_task"] == 2
+    assert rows[0]["agent_step_limit_hits"] == 0
     assert rows[0]["observation_retention_ratio"] == 0.5
     assert rows[0]["resolve_rate"] == 1.0
 

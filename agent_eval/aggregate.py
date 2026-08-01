@@ -38,6 +38,7 @@ def summarize_arm(path: Path) -> dict[str, Any]:
     original_observation_tokens = 0
     kept_observation_tokens = 0
     exit_statuses: Counter[str] = Counter()
+    calls_per_trajectory: list[int] = []
 
     for trajectory in trajectories:
         payload = _read_json(trajectory)
@@ -63,7 +64,9 @@ def summarize_arm(path: Path) -> dict[str, Any]:
                 kept_observation_tokens += int(stats.get("left_token_cnt", 0) or 0)
                 if "[Pruner Error]" in str(message.get("content", "")):
                     prune_errors += 1
-        api_calls += max(trajectory_api_calls, usage_calls)
+        calls_for_trajectory = max(trajectory_api_calls, usage_calls)
+        calls_per_trajectory.append(calls_for_trajectory)
+        api_calls += calls_for_trajectory
 
     retention = (
         kept_observation_tokens / original_observation_tokens
@@ -93,6 +96,12 @@ def summarize_arm(path: Path) -> dict[str, Any]:
         "trajectories": len(trajectories),
         "submitted": exit_statuses.get("Submitted", 0),
         "api_calls": api_calls,
+        "api_calls_mean_per_task": (
+            api_calls / len(calls_per_trajectory) if calls_per_trajectory else None
+        ),
+        "api_calls_max_per_task": max(calls_per_trajectory, default=0),
+        "agent_step_limit_hits": sum(value >= 100 for value in calls_per_trajectory),
+        "agent_step_limit_exits": exit_statuses.get("LimitsExceeded", 0),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
@@ -192,6 +201,10 @@ def write_summary(run_root: Path, rows: list[dict[str, Any]]) -> tuple[Path, Pat
         "trajectories",
         "submitted",
         "api_calls",
+        "api_calls_mean_per_task",
+        "api_calls_max_per_task",
+        "agent_step_limit_hits",
+        "agent_step_limit_exits",
         "prompt_tokens",
         "completion_tokens",
         "total_tokens",
@@ -257,7 +270,9 @@ def main(argv: list[str] | None = None) -> int:
             resolve_text = "-" if resolve_rate is None else f"{resolve_rate:.3f}"
             print(
                 f"{row['arm']}: tasks={row['trajectories']} "
-                f"api_calls={row['api_calls']} retention={retention_text} "
+                f"api_calls={row['api_calls']} "
+                f"max_calls_per_task={row['api_calls_max_per_task']} "
+                f"limit_hits={row['agent_step_limit_hits']} retention={retention_text} "
                 f"resolve_rate={resolve_text}"
             )
         return 0

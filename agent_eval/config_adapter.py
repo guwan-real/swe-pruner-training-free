@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+DEFAULT_AGENT_STEP_LIMIT = 100
+
 
 def discover_base_config(explicit: str | None = None) -> Path:
     if explicit:
@@ -142,11 +144,14 @@ def adapt_config(
     api_key: str = "EMPTY",
     min_chars: int = 500,
     timeout: float = 180.0,
+    step_limit: int = DEFAULT_AGENT_STEP_LIMIT,
 ) -> dict[str, Any]:
     if not 0.0 < keep_ratio <= 1.0:
         raise ValueError("keep_ratio must be in (0, 1]")
     if min_chars < 0:
         raise ValueError("min_chars must be non-negative")
+    if step_limit <= 0:
+        raise ValueError("step_limit must be positive")
     validate_pruning_contract(base)
     config = copy.deepcopy(dict(base))
 
@@ -170,6 +175,7 @@ def adapt_config(
     )
 
     agent = config["agent"]
+    agent["step_limit"] = step_limit
     pruner = agent["pruner"]
     pruner.update(
         {
@@ -211,6 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keep-ratio", type=float, default=0.5)
     parser.add_argument("--min-chars", type=int, default=500)
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--step-limit", type=int, default=DEFAULT_AGENT_STEP_LIMIT)
     return parser
 
 
@@ -227,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         keep_ratio=args.keep_ratio,
         min_chars=args.min_chars,
         timeout=args.timeout,
+        step_limit=args.step_limit,
     )
     output = Path(args.output).resolve()
     write_yaml(adapted, output)
@@ -238,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
                 "model_name": adapted["model"]["model_name"],
                 "api_base": adapted["model"]["model_kwargs"]["api_base"],
                 "pruner_url": adapted["agent"]["pruner"]["url"],
+                "step_limit": adapted["agent"]["step_limit"],
                 "keep_ratio": args.keep_ratio,
             },
             ensure_ascii=False,

@@ -1,5 +1,10 @@
 # B200 Server Handoff: Zero-Forward SWE-Bench
 
+All baseline and zero-forward arms use the same generated mini-swe-agent YAML
+with `agent.step_limit: 100`. The launcher rejects any other value and records
+the effective per-task limit in `manifest.json`, so a missing or zero value in
+the server base YAML cannot create an unbounded run.
+
 This document is for the local agent on the B200 server. Do not start another
 vLLM, install another mini-swe-agent, or run the removed posterior-likelihood
 scripts.

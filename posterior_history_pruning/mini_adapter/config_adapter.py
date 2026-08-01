@@ -7,6 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+DEFAULT_AGENT_STEP_LIMIT = 100
+
 
 def load_yaml(path: Path) -> dict[str, Any]:
     try:
@@ -35,8 +37,12 @@ def adapt_config(
     api_base: str,
     api_key: str = "EMPTY",
     timeout: float = 180.0,
+    step_limit: int = DEFAULT_AGENT_STEP_LIMIT,
 ) -> dict[str, Any]:
     """Generate one prompt-identical config for baseline and posterior arms."""
+
+    if step_limit <= 0:
+        raise ValueError("step_limit must be positive")
 
     config = copy.deepcopy(dict(base))
     model = config.setdefault("model", {})
@@ -62,6 +68,9 @@ def adapt_config(
     # section is empty.  Remove the legacy client for both arms so prompt
     # parity is independent of the new history adapter.
     agent.pop("pruner", None)
+    # Do not inherit an absent/zero value from an arbitrary server template:
+    # mini-swe-agent interprets zero as unlimited model calls.
+    agent["step_limit"] = step_limit
     return config
 
 
@@ -85,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-base", default="http://127.0.0.1:8015/v1")
     parser.add_argument("--api-key", default="EMPTY")
     parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument("--step-limit", type=int, default=DEFAULT_AGENT_STEP_LIMIT)
     return parser
 
 
@@ -98,6 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         api_base=args.api_base,
         api_key=args.api_key,
         timeout=args.timeout,
+        step_limit=args.step_limit,
     )
     write_yaml(config, output)
     print(
@@ -106,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
                 "base_config": str(base_path),
                 "output": str(output),
                 "model": config["model"]["model_name"],
+                "step_limit": config["agent"]["step_limit"],
                 "legacy_pruner_removed": "pruner" not in config["agent"],
             },
             ensure_ascii=False,
