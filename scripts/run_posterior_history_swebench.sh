@@ -4,10 +4,37 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_PROFILE="${SERVER_PROFILE:-$REPO_ROOT/posterior_history_server_profile.env}"
+
+# A server profile provides defaults, while explicit command-environment
+# values must win.  This matters for threshold sweeps because the local
+# profile commonly contains POSTERIOR_MIN_INPUT_TOKENS=1500.
+PROFILE_OVERRIDE_NAMES=(
+  ENV_NAME BASE_DIR WORK_DIR POSTERIOR_HISTORY_RUNS_DIR
+  VLLM_API_BASE VLLM_API_KEY VLLM_MODEL_ID MINI_SWE_PYTHON MINI_SWE_BASE_CONFIG
+  MINI_EXTRA_BIN SWEBENCH_PYTHON DATASET_SUBSET DATASET_SPLIT TASK_SLICE TASK_FILTER
+  AGENT_WORKERS GRADER_WORKERS POSTERIOR_HISTORY_METHODS POSTERIOR_HOT_OBSERVATIONS
+  POSTERIOR_MIN_INPUT_TOKENS POSTERIOR_MIN_SAVINGS_TOKENS
+  POSTERIOR_MAX_RETENTION_RATIO POSTERIOR_BLOCK_MAX_LINES POSTERIOR_MAX_OUTPUT_CHARS
+  PARALLEL_ARMS MIN_FREE_DISK_GB RUN_TAG SKIP_BASELINE
+)
+PROFILE_OVERRIDE_SET_NAMES=()
+PROFILE_OVERRIDE_VALUES=()
+for profile_name in "${PROFILE_OVERRIDE_NAMES[@]}"; do
+  if declare -p "$profile_name" >/dev/null 2>&1; then
+    PROFILE_OVERRIDE_SET_NAMES+=("$profile_name")
+    PROFILE_OVERRIDE_VALUES+=("${!profile_name}")
+  fi
+done
 if [[ -f "$SERVER_PROFILE" ]]; then
   # shellcheck source=/dev/null
   source "$SERVER_PROFILE"
 fi
+for ((profile_index = 0; profile_index < ${#PROFILE_OVERRIDE_SET_NAMES[@]}; profile_index++)); do
+  printf -v "${PROFILE_OVERRIDE_SET_NAMES[$profile_index]}" '%s' \
+    "${PROFILE_OVERRIDE_VALUES[$profile_index]}"
+done
+unset PROFILE_OVERRIDE_NAMES PROFILE_OVERRIDE_SET_NAMES PROFILE_OVERRIDE_VALUES
+unset profile_name profile_index
 
 ENV_NAME="${ENV_NAME:-swepruner-training-free}"
 BASE_DIR="${BASE_DIR:-/home/yuantao/futao}"
@@ -31,6 +58,7 @@ POSTERIOR_BLOCK_MAX_LINES="${POSTERIOR_BLOCK_MAX_LINES:-16}"
 POSTERIOR_MAX_OUTPUT_CHARS="${POSTERIOR_MAX_OUTPUT_CHARS:-9000}"
 PARALLEL_ARMS="${PARALLEL_ARMS:-0}"
 MIN_FREE_DISK_GB="${MIN_FREE_DISK_GB:-10}"
+SKIP_BASELINE="${SKIP_BASELINE:-0}"
 
 MODE="${1:-launch}"
 if [[ $# -gt 0 ]]; then shift; fi
@@ -42,7 +70,7 @@ fail() { log "ERROR: $*"; exit 2; }
 usage() {
   cat <<'EOF'
 Usage:
-  bash scripts/run_posterior_history_swebench.sh [preflight|smoke|launch|status|results|grade|stop]
+  bash scripts/run_posterior_history_swebench.sh [config|preflight|smoke|launch|status|results|grade|stop]
 
 This is an isolated posterior-history experiment. It never calls a pruning
 model or an HTTP pruning service. The newest observations enter Qwen in full;
@@ -52,6 +80,9 @@ normal follow-up action. The canonical trajectory remains full and auditable.
 Default arms:
   baseline
   posterior_adaptive
+
+Set SKIP_BASELINE=1 to run posterior arms only. For the standard 1000/500
+serial sweep, use scripts/run_posterior_threshold_sweep.sh.
 
 Important profile overrides:
   MINI_SWE_PYTHON, MINI_SWE_BASE_CONFIG, VLLM_MODEL_ID
@@ -65,7 +96,7 @@ EOF
 }
 
 case "$MODE" in
-  preflight|smoke|launch|status|results|result|grade|stop) ;;
+  config|preflight|smoke|launch|status|results|result|grade|stop) ;;
   help|-h|--help) usage; exit 0 ;;
   *) fail "unknown command: $MODE" ;;
 esac
@@ -191,6 +222,7 @@ preflight() {
   docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
   [[ "$MIN_FREE_DISK_GB" =~ ^[0-9]+$ ]] || fail "MIN_FREE_DISK_GB must be a non-negative integer"
   [[ "$PARALLEL_ARMS" == "0" || "$PARALLEL_ARMS" == "1" ]] || fail "PARALLEL_ARMS must be 0 or 1"
+  [[ "$SKIP_BASELINE" == "0" || "$SKIP_BASELINE" == "1" ]] || fail "SKIP_BASELINE must be 0 or 1"
   "$PYTHON_BIN" - "$POSTERIOR_HOT_OBSERVATIONS" "$POSTERIOR_MIN_INPUT_TOKENS" \
     "$POSTERIOR_MIN_SAVINGS_TOKENS" "$POSTERIOR_MAX_RETENTION_RATIO" \
     "$POSTERIOR_BLOCK_MAX_LINES" "$POSTERIOR_MAX_OUTPUT_CHARS" "$AGENT_WORKERS" <<'PY'
@@ -262,13 +294,31 @@ start_arm() {
 write_manifest() {
   "$PYTHON_BIN" - "$RUN_ROOT/manifest.json" "$VLLM_API_BASE" "$RESOLVED_MODEL_ID" \
     "$POSTERIOR_HISTORY_METHODS" "$TASK_SLICE" "$RESOLVED_BASE_CONFIG" \
-    "$POSTERIOR_HOT_OBSERVATIONS" "$MINI_SWE_PYTHON_BIN" <<'PY'
+    "$POSTERIOR_HOT_OBSERVATIONS" "$MINI_SWE_PYTHON_BIN" \
+    "$POSTERIOR_MIN_INPUT_TOKENS" "$POSTERIOR_MIN_SAVINGS_TOKENS" \
+    "$POSTERIOR_MAX_RETENTION_RATIO" "$POSTERIOR_BLOCK_MAX_LINES" \
+    "$POSTERIOR_MAX_OUTPUT_CHARS" "$SKIP_BASELINE" <<'PY'
 import json
 import subprocess
 import sys
 from datetime import datetime, timezone
 
-output, api_base, model, methods, task_slice, base_config, hot, mini_python = sys.argv[1:]
+(
+    output,
+    api_base,
+    model,
+    methods,
+    task_slice,
+    base_config,
+    hot,
+    mini_python,
+    min_input,
+    min_savings,
+    max_retention,
+    block_max_lines,
+    max_output_chars,
+    skip_baseline,
+) = sys.argv[1:]
 payload = {
     "created_at": datetime.now(timezone.utc).isoformat(),
     "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -280,6 +330,12 @@ payload = {
     "base_config": base_config,
     "mini_swe_python": mini_python,
     "hot_observations": int(hot),
+    "min_input_tokens": int(min_input),
+    "min_savings_tokens": int(min_savings),
+    "max_retention_ratio": float(max_retention),
+    "block_max_lines": int(block_max_lines),
+    "max_output_chars": int(max_output_chars),
+    "baseline_included": skip_baseline != "1",
     "timing": "full current observation, posterior-guided cold-history prompt view",
     "trained_parameters": 0,
     "pruner_model_forwards_per_observation": 0,
@@ -296,7 +352,11 @@ launch() {
   if [[ "$MODE" == "smoke" ]]; then
     TASK_SLICE="0:1"
     POSTERIOR_HISTORY_METHODS="adaptive"
-    log "smoke: one real SWE-Bench task, baseline + posterior_adaptive"
+    if [[ "$SKIP_BASELINE" == "1" ]]; then
+      log "smoke: one real SWE-Bench task, posterior_adaptive only"
+    else
+      log "smoke: one real SWE-Bench task, baseline + posterior_adaptive"
+    fi
   fi
   preflight
   local run_tag="${RUN_TAG:-posterior_history_qwen35_$(date +%Y%m%d_%H%M%S)}"
@@ -306,11 +366,25 @@ launch() {
   printf '%s\n' "$run_tag" >"$LAST_RUN_FILE"
   write_manifest
   generate_shared_config
-  start_arm baseline adaptive
+  if [[ "$SKIP_BASELINE" == "1" ]]; then
+    log "skipping baseline arm; posterior-only run"
+  else
+    start_arm baseline adaptive
+  fi
   split_methods
   local method
   for method in "${METHOD_VALUES[@]}"; do start_arm "posterior_$method" "$method"; done
   [[ "$PARALLEL_ARMS" == "1" ]] && log "all arms launched; run root: $RUN_ROOT" || show_results
+}
+
+show_config() {
+  printf 'SERVER_PROFILE=%s\n' "$SERVER_PROFILE"
+  printf 'TASK_SLICE=%s\n' "$TASK_SLICE"
+  printf 'POSTERIOR_HISTORY_METHODS=%s\n' "$POSTERIOR_HISTORY_METHODS"
+  printf 'POSTERIOR_MIN_INPUT_TOKENS=%s\n' "$POSTERIOR_MIN_INPUT_TOKENS"
+  printf 'PARALLEL_ARMS=%s\n' "$PARALLEL_ARMS"
+  printf 'SKIP_BASELINE=%s\n' "$SKIP_BASELINE"
+  printf 'RUN_TAG=%s\n' "${RUN_TAG:-}"
 }
 
 resolve_run_root() {
@@ -377,6 +451,7 @@ stop_run() {
 }
 
 case "$MODE" in
+  config) show_config ;;
   preflight) activate_runtime; preflight ;;
   smoke|launch) launch ;;
   status) show_status ;;

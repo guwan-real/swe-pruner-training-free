@@ -25,6 +25,10 @@ bash scripts/run_posterior_history_swebench.sh smoke
 并发影响 token 与 wall-time 对比。完整参数、结果汇总和官方评分入口在
 `docs/POSTERIOR_HISTORY_SERVER_HANDOFF.md`。
 
+若已有可复用的 baseline，可用
+`scripts/run_posterior_threshold_sweep.sh launch` 只跑 posterior，并按 1000、500
+两个 `MIN_INPUT_TOKENS` 门槛串行实验；该脚本不会重新运行 baseline。
+
 ## 实现与端到端实验组
 
 | 方法 | 独立目录 | 训练 | 运行时模型/内部信号 | 主要用途 |

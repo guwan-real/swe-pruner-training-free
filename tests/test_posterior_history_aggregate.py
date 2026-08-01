@@ -89,3 +89,24 @@ def test_aggregate_reports_history_savings_and_baseline_delta(tmp_path: Path) ->
     assert untracked["history_observations_seen"] == 1
     assert untracked["history_observations_tracked"] == 0
     assert untracked["history_observations_untracked"] == 1
+
+
+def test_posterior_only_run_summarizes_without_a_baseline_directory(tmp_path: Path) -> None:
+    _write_arm(
+        tmp_path,
+        "posterior_adaptive",
+        prompt_tokens=800,
+        total_tokens=900,
+        history_stats={
+            "status": "skipped",
+            "reason": "below-min-input-tokens",
+            "token_estimator": "max-lexical-ascii4-unicode1-v2",
+        },
+    )
+
+    rows = summarize_run(tmp_path)
+
+    assert len(rows) == 1
+    assert rows[0]["arm"] == "posterior_adaptive"
+    assert rows[0]["agent_prompt_token_ratio_vs_baseline"] is None
+    assert rows[0]["posterior_below_min_input_observations"] == 1

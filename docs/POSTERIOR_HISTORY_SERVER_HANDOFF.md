@@ -35,6 +35,34 @@ posterior_adaptive
 - `grade`：对每个有 `preds.json` 的 arm 做官方 harness 评分；
 - `stop`：停止该 run 的 arm 进程。
 
+## 复用旧 baseline：1000 / 500 串行实验
+
+已有同模型、同 prompt、同任务切片的 baseline 时，不需要再次花费时间运行它。
+一键脚本默认只运行 `posterior_adaptive`，先 1000、完成后再 500：
+
+```bash
+bash scripts/run_posterior_threshold_sweep.sh launch
+```
+
+它固定 `TASK_SLICE=0:20`、`PARALLEL_ARMS=0`、`SKIP_BASELINE=1` 和
+`POSTERIOR_HISTORY_METHODS=adaptive`。两个 run tag 会写入仓库本地且 Git 忽略的
+`.posterior_threshold_sweep.last`。之后可直接批量查看结果或评分：
+
+```bash
+bash scripts/run_posterior_threshold_sweep.sh results
+GRADER_WORKERS=32 bash scripts/run_posterior_threshold_sweep.sh grade
+```
+
+需要只跑一个阈值时，在 `launch` 后传值，例如
+`bash scripts/run_posterior_threshold_sweep.sh launch 1000`。可用
+`RUN_TAG_PREFIX` 自定义两轮共同前缀。
+
+launcher 的配置优先级为“显式命令环境 > server profile > 内置默认值”。因此即使
+本地 profile 写着 `POSTERIOR_MIN_INPUT_TOKENS=1500`，sweep 传入的 1000/500
+也不会被覆盖。每个 run 的 `manifest.json` 会记录最终生效的阈值和
+`baseline_included=false`。posterior-only 的 `results` 不要求 run 目录中存在
+baseline；相对 baseline 的 delta 字段留空，后续与旧 baseline 统一比较即可。
+
 ## Smoke 通过条件
 
 先看 trajectory：
