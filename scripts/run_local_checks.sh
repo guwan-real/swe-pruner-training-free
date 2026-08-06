@@ -30,3 +30,6 @@ fi
 "$PYTHON_BIN" -m zero_forward_pruning.preflight --self-test >/dev/null
 "$PYTHON_BIN" -m posterior_history_pruning.agent_eval.aggregate --help >/dev/null
 "$PYTHON_BIN" -m agent_context.cli components >/dev/null
+"$PYTHON_BIN" -m agent_context.agent_eval.aggregate --help >/dev/null
+"$PYTHON_BIN" -m agent_context.agent_eval.run_manifest --help >/dev/null
+"$PYTHON_BIN" -m agent_context.adapters.config_adapter --help >/dev/null

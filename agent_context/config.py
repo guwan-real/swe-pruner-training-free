@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 from agent_context.codecs.base import ViewGenerationConfig
+from agent_context.models import ObservationKind
 
 
 @dataclass(frozen=True)
@@ -39,11 +40,20 @@ class PlannerConfig:
             raise ValueError("max_prompt_tokens must be positive")
         if self.reserve_completion_tokens < 0:
             raise ValueError("reserve_completion_tokens must be non-negative")
+        if (
+            self.max_prompt_tokens is not None
+            and self.reserve_completion_tokens >= self.max_prompt_tokens
+        ):
+            raise ValueError("reserve_completion_tokens must be less than max_prompt_tokens")
         if self.recency_weight < 0 or self.relevance_weight < 0:
             raise ValueError("planner weights must be non-negative")
         normalized_kind_weights = {
             str(kind): float(weight) for kind, weight in self.kind_weights.items()
         }
+        valid_kinds = {kind.value for kind in ObservationKind}
+        unknown_kinds = sorted(set(normalized_kind_weights).difference(valid_kinds))
+        if unknown_kinds:
+            raise ValueError("unknown planner kind weights: " + ", ".join(unknown_kinds))
         if any(weight <= 0 for weight in normalized_kind_weights.values()):
             raise ValueError("planner kind weights must be positive")
         object.__setattr__(self, "kind_weights", normalized_kind_weights)
@@ -64,6 +74,7 @@ class AgentContextConfig:
     views: ViewGenerationConfig = field(default_factory=ViewGenerationConfig)
     view_overrides: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     codec_options: Mapping[str, Any] = field(default_factory=dict)
+    signal_options: Mapping[str, Any] = field(default_factory=dict)
     include_task_signal: bool = False
     include_causing_action_signal: bool = False
     track_later_references: bool = True
@@ -82,12 +93,17 @@ class AgentContextConfig:
             raise ValueError("codec_profile must not be empty")
         if not self.signal_provider or not self.signal_strategy:
             raise ValueError("signal components must not be empty")
-        object.__setattr__(
-            self,
-            "view_overrides",
-            {str(key): dict(value) for key, value in self.view_overrides.items()},
-        )
+        normalized_overrides = {str(key): dict(value) for key, value in self.view_overrides.items()}
+        valid_kinds = {kind.value for kind in ObservationKind}
+        unknown_kinds = sorted(set(normalized_overrides).difference(valid_kinds))
+        if unknown_kinds:
+            raise ValueError("unknown view override kinds: " + ", ".join(unknown_kinds))
+        base_views = asdict(self.views)
+        for kind, override in normalized_overrides.items():
+            ViewGenerationConfig(**(base_views | override))
+        object.__setattr__(self, "view_overrides", normalized_overrides)
         object.__setattr__(self, "codec_options", dict(self.codec_options))
+        object.__setattr__(self, "signal_options", dict(self.signal_options))
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any] | None = None) -> AgentContextConfig:

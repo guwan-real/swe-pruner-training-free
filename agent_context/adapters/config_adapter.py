@@ -17,7 +17,7 @@ from integrations.mini_swe_config import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Create a prompt-identical mini config for posterior history experiments"
+        description="Create a prompt-identical mini config for agent-context experiments"
     )
     parser.add_argument("--base-config", required=True)
     parser.add_argument("--output", required=True)

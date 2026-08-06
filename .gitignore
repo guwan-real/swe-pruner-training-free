@@ -19,6 +19,7 @@ models/
 server_profile.env
 zero_forward_server_profile.env
 posterior_history_server_profile.env
+agent_context_server_profile.env
 .posterior_threshold_sweep.last
 
 # Local agent-context design documents.

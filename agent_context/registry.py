@@ -52,19 +52,35 @@ class ComponentRegistry:
 
     def __init__(self) -> None:
         self.codec_profiles: dict[str, CodecFactory] = {}
+        self.codec_option_keys: dict[str, frozenset[str]] = {}
         self.signal_providers: dict[str, SignalProviderFactory] = {}
         self.signal_strategies: dict[str, SignalStrategyFactory] = {}
+        self.signal_option_keys: dict[str, frozenset[str]] = {}
         self.planners: dict[str, PlannerFactory] = {}
         self.visibility_policies: dict[str, VisibilityFactory] = {}
 
-    def register_codec_profile(self, name: str, factory: CodecFactory) -> None:
+    def register_codec_profile(
+        self,
+        name: str,
+        factory: CodecFactory,
+        *,
+        option_keys: frozenset[str] = frozenset(),
+    ) -> None:
         self.codec_profiles[name] = factory
+        self.codec_option_keys[name] = option_keys
 
     def register_signal_provider(self, name: str, factory: SignalProviderFactory) -> None:
         self.signal_providers[name] = factory
 
-    def register_signal_strategy(self, name: str, factory: SignalStrategyFactory) -> None:
+    def register_signal_strategy(
+        self,
+        name: str,
+        factory: SignalStrategyFactory,
+        *,
+        option_keys: frozenset[str] = frozenset(),
+    ) -> None:
         self.signal_strategies[name] = factory
+        self.signal_option_keys[name] = option_keys
 
     def register_planner(self, name: str, factory: PlannerFactory) -> None:
         self.planners[name] = factory
@@ -82,6 +98,18 @@ class ComponentRegistry:
         return factory(config)
 
     def components(self, config: AgentContextConfig) -> ContextComponents:
+        self._validate_options(
+            "codec profile",
+            config.codec_profile,
+            config.codec_options,
+            self.codec_option_keys,
+        )
+        self._validate_options(
+            "signal strategy",
+            config.signal_strategy,
+            config.signal_options,
+            self.signal_option_keys,
+        )
         planner_name = {
             "passthrough": "full",
             "minimum": "minimum",
@@ -93,6 +121,22 @@ class ComponentRegistry:
             planner=self._build(self.planners, planner_name, config),
             visibility=self._build(self.visibility_policies, config.timing, config),
         )
+
+    @staticmethod
+    def _validate_options(
+        component_type: str,
+        component_name: str,
+        options: Any,
+        schemas: dict[str, frozenset[str]],
+    ) -> None:
+        allowed = schemas.get(component_name)
+        if allowed is None:
+            return
+        unknown = sorted(set(options).difference(allowed))
+        if unknown:
+            raise ValueError(
+                f"unknown {component_type} options for {component_name!r}: " + ", ".join(unknown)
+            )
 
     def manifest(self) -> dict[str, tuple[str, ...]]:
         return {
@@ -111,10 +155,21 @@ def build_default_registry() -> ComponentRegistry:
         lambda config: build_typed_codec_registry(
             block_max_lines=int(config.codec_options.get("block_max_lines", 16))
         ),
+        option_keys=frozenset({"block_max_lines"}),
     )
     registry.register_codec_profile(
         "legacy_posterior_v1",
         lambda config: build_legacy_posterior_codec_registry(dict(config.codec_options)),
+        option_keys=frozenset(
+            {
+                "block_max_lines",
+                "max_output_chars",
+                "max_retention_ratio",
+                "method",
+                "min_input_tokens",
+                "min_savings_tokens",
+            }
+        ),
     )
     registry.register_signal_provider(
         "posterior_action", lambda config: PosteriorActionSignalProvider()
@@ -124,9 +179,10 @@ def build_default_registry() -> ComponentRegistry:
         "rare_terms",
         lambda config: RareTermSignalStrategy(
             max_document_frequency_ratio=float(
-                config.codec_options.get("max_document_frequency_ratio", 0.1)
+                config.signal_options.get("max_document_frequency_ratio", 0.1)
             )
         ),
+        option_keys=frozenset({"max_document_frequency_ratio"}),
     )
     registry.register_signal_strategy("all_terms", lambda config: AllTermsSignalStrategy())
     registry.register_signal_strategy("none", lambda config: NoSignalStrategy())

@@ -43,7 +43,9 @@
     }
   },
   "codec_options": {
-    "block_max_lines": 16,
+    "block_max_lines": 16
+  },
+  "signal_options": {
     "max_document_frequency_ratio": 0.1
   },
   "include_task_signal": false,
