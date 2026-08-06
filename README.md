@@ -12,6 +12,12 @@
 
 `posterior_history_pruning/` 是与 zero-forward 隔离的第二个在线实验：它让模型先完整阅读新的工具输出一次，随后只在更晚的临时 prompt 历史视图中，使用模型正常产生的后续 action 作为后验信号压缩旧 observation。它不额外请求 vLLM，不修改 canonical trajectory。设计与服务器交接见 `docs/POSTERIOR_HISTORY_PRUNING_DESIGN.md` 和 `docs/POSTERIOR_HISTORY_SERVER_HANDOFF.md`。
 
+`agent_context/` 是在两条既有实验之外新增的模型解耦上下文框架。它把
+observation 生命周期、typed codec、多级 view、信号策略、全局 prompt 预算、
+可逆 memory tool 和逐轮 manifest 拆成可独立替换的组件。现有 zero-forward 与
+posterior 入口保持不变，可继续作为行为基线。默认 planner 在 observation 离开
+hot window 时一次性提交 view，后续不再改写旧前缀，以保留模型端 prefix KV cache。
+
 后验实验使用独立 profile 和独立运行目录；服务器上先复制
 `configs/posterior_history_server_profile.example.env` 为
 `posterior_history_server_profile.env`，填入现有 `MINI_SWE_PYTHON`，再运行：
@@ -166,6 +172,8 @@ training_free_pruning/
 ├── evaluation/                 # replay 与代理指标
 ├── integrations/               # fail-open middleware 与官方 HTTP 兼容层
 ├── zero_forward_pruning/       # 隔离的零模型调用协议、方法、恢复服务与 mini adapter
+├── posterior_history_pruning/  # read-once、compact-later 在线实验
+├── agent_context/              # 模型解耦的 agent 上下文生命周期框架
 ├── configs/                    # 长度预算与 Pareto 预算
 ├── examples/                   # 请求和 replay 样例
 ├── scripts/                    # 本地/服务器/实验脚本

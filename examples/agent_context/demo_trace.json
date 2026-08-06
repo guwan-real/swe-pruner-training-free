@@ -1,0 +1,59 @@
+{
+  "task_id": "demo-context-task",
+  "task_text": "Find where resolve_model validates its configuration.",
+  "events": [
+    {
+      "type": "message",
+      "message": {
+        "role": "system",
+        "content": "You are a coding agent."
+      }
+    },
+    {
+      "type": "observation",
+      "observation_id": "source-1",
+      "path": "model.py",
+      "causing_action": "sed -n '1,240p' model.py",
+      "visible_content": "import os\n\ndef helper(config):\n    value = config.get('helper')\n    if value is None:\n        raise ValueError('helper')\n    normalized = str(value).strip()\n    return normalized\n\ndef resolve_model(config):\n    value = config.get('model')\n    if value is None:\n        raise ValueError('model')\n    normalized = str(value).strip()\n    if not normalized:\n        raise ValueError('empty model')\n    return normalized\n\ndef unused(config):\n    value = config.get('unused')\n    return value"
+    },
+    {
+      "type": "prompt"
+    },
+    {
+      "type": "action",
+      "command": "rg -n resolve_model model.py",
+      "context_focus_question": "Where is resolve_model validated?",
+      "message": {
+        "role": "assistant",
+        "content": "Inspect resolve_model."
+      }
+    },
+    {
+      "type": "observation",
+      "observation_id": "search-1",
+      "causing_action": "rg -n resolve_model model.py",
+      "visible_content": "model.py:10:def resolve_model(config):"
+    },
+    {
+      "type": "prompt"
+    },
+    {
+      "type": "action",
+      "command": "sed -n '10,20p' model.py",
+      "message": {
+        "role": "assistant",
+        "content": "Read the matched function."
+      }
+    },
+    {
+      "type": "observation",
+      "observation_id": "source-2",
+      "path": "model.py",
+      "causing_action": "sed -n '10,20p' model.py",
+      "visible_content": "def resolve_model(config):\n    value = config.get('model')\n    if value is None:\n        raise ValueError('model')\n    normalized = str(value).strip()\n    if not normalized:\n        raise ValueError('empty model')\n    return normalized"
+    },
+    {
+      "type": "prompt"
+    }
+  ]
+}

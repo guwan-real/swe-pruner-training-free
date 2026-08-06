@@ -1,0 +1,5 @@
+{
+  "hot_observations": [1, 2, 3],
+  "planner.target_retention": [0.5, 0.6, 0.7],
+  "signal_strategy": ["rare_terms", "none"]
+}

@@ -1,0 +1,27 @@
+{
+  "timing": "posterior",
+  "hot_observations": 2,
+  "codec_profile": "legacy_posterior_v1",
+  "signal_provider": "posterior_action",
+  "signal_strategy": "rare_terms",
+  "planner": {
+    "mode": "minimum",
+    "cache_policy": "freeze_on_cold"
+  },
+  "views": {
+    "include_reference_view": false,
+    "include_skeleton_view": false,
+    "include_focused_view": true
+  },
+  "codec_options": {
+    "method": "adaptive",
+    "min_input_tokens": 1500,
+    "min_savings_tokens": 256,
+    "max_retention_ratio": 0.85,
+    "block_max_lines": 16,
+    "max_output_chars": 9000
+  },
+  "include_task_signal": false,
+  "include_causing_action_signal": false,
+  "track_later_references": false
+}

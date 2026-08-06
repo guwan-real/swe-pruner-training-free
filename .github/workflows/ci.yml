@@ -44,3 +44,4 @@ jobs:
           tf-extract-signals --help
           zero-forward-prune-serve --help
           zero-forward-prune-preflight --self-test
+          agent-context components
